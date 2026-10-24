@@ -1,0 +1,13 @@
+{
+  "name": "@dual/glm-client",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.js",
+  "module": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src"
+  ]
+}

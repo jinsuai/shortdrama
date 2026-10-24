@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+src-tauri/target/
+
+# Local runtime resources (downloaded by CI)
+src-tauri/resources/ffmpeg.exe
+src-tauri/resources/ffmpeg
+
+# Tauri mobile generated project (由 tauri android init 生成)
+src-tauri/gen/android/
+src-tauri/gen/apple/
+
+# 临时构建输出（本地绕开 safe-delete 时使用）
+dist-*/
+dist-stale-*/
+
+# Scratch / legacy
+tmp/
+jinsu-app/
+vite.config.js.timestamp-*.mjs
+
+# Logs & OS
+*.log
+.DS_Store
+Thumbs.db
+
+# 本地 clone 的 shortdrama-win1 独立仓库（勿提交）
+/shortdrama-win1/
+
+
+# 本地备份 / 诊断噪音（勿提交）
+*.bak*
+err.txt
+*.bak
+
+# 环境变量 / 密钥（切勿提交）
+.env
+.env.*
+*.local

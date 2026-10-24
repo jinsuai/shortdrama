@@ -1,0 +1,220 @@
+// ===================================================================
+// DualStudio 计费 / 账户 SCSS 设计系统（深色主题）
+// 变量 + 嵌套 + mixin，供 AuthDialog / RechargeModal / MembershipPanel /
+// ProfilePanel / LogsPanel / AccountButton 共用。
+// ===================================================================
+
+// ---- 设计令牌 ----
+$brand:        #5b8cff;
+$brand-2:      #ff7a59;
+$bg:           #0b0f1a;
+$bg-2:         #141a2e;
+$surface:      rgba(15,23,42,0.064);
+$surface-2:    rgba(15,23,42,0.112);
+$border:       rgba(15,23,42,0.144);
+$text:         #334155;
+$text-dim:     #9aa4bf;
+$ok:           #36d399;
+$danger:       #ff5c7a;
+$warn:         #ffcf5b;
+$radius:       14px;
+$radius-sm:    10px;
+
+// ---- mixin ----
+@mixin card($pad: 18px) {
+  background: $bg-2;
+  border: 1px solid $border;
+  border-radius: $radius;
+  padding: $pad;
+}
+@mixin btn($bg, $fg: #fff) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: $radius-sm;
+  background: $bg;
+  color: $fg;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.05s ease;
+  &:hover { filter: brightness(1.08); }
+  &:active { transform: translateY(1px); }
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+}
+@mixin field {
+  width: 100%;
+  padding: 11px 13px;
+  background: $surface;
+  border: 1px solid $border;
+  border-radius: $radius-sm;
+  color: $text;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease;
+  &:focus { border-color: $brand; }
+}
+
+// ---- 遮罩 / 弹窗 ----
+.ds-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 7, 15, 0.66);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+  padding: 20px;
+  animation: ds-fade 0.15s ease;
+}
+.ds-modal {
+  @include card(0);
+  width: 440px;
+  max-width: 100%;
+  max-height: 90vh;
+  overflow: auto;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  animation: ds-pop 0.16s ease;
+}
+.ds-modal--wide { width: 560px; }
+.ds-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+  border-bottom: 1px solid $border;
+  h3 { margin: 0; font-size: 17px; color: $text; }
+}
+.ds-modal-body { padding: 20px; }
+.ds-close {
+  background: none;
+  border: none;
+  color: $text-dim;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  &:hover { color: $text; }
+}
+
+// ---- tabs ----
+.ds-tabs {
+  display: flex;
+  gap: 6px;
+  background: $surface;
+  padding: 5px;
+  border-radius: $radius-sm;
+  margin-bottom: 18px;
+}
+.ds-tab {
+  flex: 1;
+  padding: 9px;
+  text-align: center;
+  border-radius: 8px;
+  color: $text-dim;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  background: none;
+  transition: 0.15s;
+  &.active { background: $brand; color: #fff; }
+}
+
+// ---- 表单 ----
+.ds-field { margin-bottom: 14px; label { display:block; font-size:13px; color:$text-dim; margin-bottom:7px; } }
+.ds-input { @include field; }
+.ds-error { color: $danger; font-size: 13px; margin: 4px 0 12px; }
+.ds-submit { width: 100%; margin-top: 6px; @include btn($brand); }
+
+// ---- 用户徽标 / 账户按钮 ----
+.ds-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 6px;
+  background: $surface;
+  border: 1px solid $border;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: 0.15s;
+  &:hover { background: $surface-2; }
+}
+.ds-avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: linear-gradient(135deg, $brand, $brand-2);
+  color: #fff; font-weight: 700; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+}
+.ds-account-meta { line-height: 1.2; }
+.ds-account-name { font-size: 13px; color: $text; font-weight: 600; }
+.ds-account-sub { font-size: 11px; color: $text-dim; }
+.ds-login-btn { @include btn($brand); }
+
+// ---- 会员等级徽章 ----
+.ds-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: rgba(91, 140, 255, 0.16); color: $brand;
+  &.lv1 { background: rgba(54,211,153,0.16); color: $ok; }
+  &.lv2 { background: rgba(255,207,91,0.16); color: $warn; }
+  &.lv3 { background: rgba(255,122,89,0.18); color: $brand-2; }
+}
+
+// ---- 用户档案卡 ----
+.ds-profile-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;
+}
+.ds-stat {
+  @include card(14px);
+  .k { font-size: 12px; color: $text-dim; margin-bottom: 6px; }
+  .v { font-size: 20px; font-weight: 700; color: $text; }
+  .v.small { font-size: 15px; }
+}
+.ds-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+// ---- 档位网格 ----
+.ds-tier-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ds-tier {
+  @include card(16px);
+  cursor: pointer;
+  transition: 0.15s;
+  text-align: center;
+  &:hover { border-color: $brand; transform: translateY(-2px); }
+  .price { font-size: 24px; font-weight: 800; color: $text; }
+  .price .cur { font-size: 14px; color: $text-dim; margin-right: 2px; }
+  .credits { color: $brand; font-weight: 700; font-size: 14px; margin-top: 4px; }
+  .desc { color: $text-dim; font-size: 12px; margin-top: 6px; }
+  &.member { &:hover { border-color: $brand-2; } .credits { color: $brand-2; } }
+}
+.ds-tier.featured { border-color: $brand-2; box-shadow: 0 0 0 1px $brand-2 inset; }
+
+// ---- 记录列表 ----
+.ds-log {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; border-bottom: 1px solid $border;
+  &:last-child { border-bottom: none; }
+  .left { .t { color: $text; font-size: 14px; }
+         .s { color: $text-dim; font-size: 12px; margin-top: 3px; } }
+  .right { text-align: right; .amt { font-weight: 700; }
+          .amt.minus { color: $danger; }
+          .amt.plus { color: $ok; }
+          .s { color: $text-dim; font-size: 12px; margin-top: 3px; } }
+}
+.ds-empty { color: $text-dim; text-align: center; padding: 30px 0; font-size: 14px; }
+.ds-loading { color: $text-dim; text-align: center; padding: 24px 0; font-size: 14px; }
+
+// ---- 提示条 ----
+.ds-toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+  background: $bg-2; border: 1px solid $border; color: $text;
+  padding: 12px 18px; border-radius: $radius-sm; z-index: 9500;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5); font-size: 14px;
+  animation: ds-pop 0.16s ease;
+}
+
+@keyframes ds-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ds-pop { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: scale(1); } }
