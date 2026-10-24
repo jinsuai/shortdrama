@@ -1,5 +1,16 @@
 # 美嘉拓 — AI 短剧创作工作台（开源版）
 
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
+[![架构：本地优先](https://img.shields.io/badge/arch-本地优先-0ea5e9)](./README.md#本地优先)
+[![React](https://img.shields.io/badge/React-18-61dafb)](https://react.dev)
+[![Vite](https://img.shields.io/badge/Vite-5-646cff)](https://vitejs.dev)
+[![在线 Demo](https://img.shields.io/badge/demo-GitHub%20Pages-2ea44f)](https://qiaohang001.github.io/shortdrama)
+
+> 纯浏览器、本地优先的 AI 短剧全流程工作台：资产管理 → 分镜剧本 → 批量生成 → 导出，一条龙。
+> 调用你自己的模型（本地 Ollama / vLLM 或任意 OpenAI 兼容 API），不绑平台、数据不出本机。
+
+![preview](docs/preview.png)
+
 面向竖屏短剧创作的 **纯浏览器** AI 全流程工作台：从剧本出发，完成分集剧本、实体设定、
 分镜拆分、分镜生图、角色管理、AI 配音、视频生成、剪辑成片到导出的完整链路。
 
