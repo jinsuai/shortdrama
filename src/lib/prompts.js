@@ -4,7 +4,7 @@
 
 import { generateText } from './providers/index.js';
 
-// ── 艺术风格推荐（DeepSeek 读剧本推荐 3 种）───────────────────────
+// ── 艺术风格推荐（文本模型读剧本推荐 3 种）───────────────────────
 export const PROMPT_RECOMMEND_STYLES = `你是一个专业的影视艺术指导顾问。请阅读以下短剧剧本，推荐恰好 3 种适合该剧本的视觉艺术风格。
 
 **输出格式**：

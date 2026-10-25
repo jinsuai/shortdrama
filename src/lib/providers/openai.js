@@ -109,7 +109,9 @@ export async function callMedia({ baseUrl, apiKey, model, endpoint, pollPath = '
   if (direct) return { resultUrl: direct, raw: data };
 
   // 形态二：任务型（返回 id，需要轮询）
-  const taskId = data?.id || data?.task_id || data?.taskId;
+  // 任务 id 字段名各家不一：Agnes 用 video_id，OpenAI/Kling/Runway 用 id / task_id / taskId。
+  // 全部兼容，避免「换个模型就改一次代码」。
+  const taskId = data?.video_id || data?.id || data?.task_id || data?.taskId;
   if (taskId && pollPath) {
     const base = resolveBase(baseUrl).replace(/\/$/, '');
     const ep = pollPath.replace('{id}', encodeURIComponent(taskId));

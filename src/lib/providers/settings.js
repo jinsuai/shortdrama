@@ -73,15 +73,19 @@ export const PROVIDER_PRESETS = [
 
 export function getModelConfig(modality) {
   try {
+    // all 是 localStorage 里「按模态存的实际配置」，meta 只是默认值/展示元数据。
+    // 🔴 这里曾经把两者搞混（写成 MODALITIES[modality][modality]），导致 apiKey 恒为 ''，
+    //    所有生成链路都会被 requireConfig 判成「未配置」。任何改动请保留 saved 为主、meta 仅兜底。
     const all = JSON.parse(localStorage.getItem(KEY) || '{}');
-    const m = MODALITIES[modality] || {};
+    const saved = all[modality] || {};
+    const meta = MODALITIES[modality] || {};
     return {
-      baseUrl: m[modality]?.baseUrl ?? m[modality]?.baseUrl ?? '',
-      apiKey: m[modality]?.apiKey ?? '',
-      model: m[modality]?.model ?? '',
-      endpoint: m[modality]?.endpoint ?? m[modality]?.endpoint ?? '',
-      pollPath: m[modality]?.pollPath ?? '',
-      ...(m[modality] || {}),
+      ...saved,
+      baseUrl: saved.baseUrl || '',
+      apiKey: saved.apiKey || '',
+      model: saved.model || '',
+      endpoint: saved.endpoint || meta.defaultEndpoint || '',
+      pollPath: saved.pollPath || '',
     };
   } catch {
     return {};

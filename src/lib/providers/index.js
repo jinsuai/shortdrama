@@ -75,15 +75,30 @@ export async function generateImage(prompt, opts = {}) {
   return { resultUrl: urls[0], allUrls: urls, raw: { data: urls.map((u) => ({ url: u })) } };
 }
 
-/** 视频生成。image 为可选首帧（图生视频）；其余参数透传给媒体接口 */
-export async function generateVideo({ prompt, image, duration, ratio, engine, mode, onProgress, signal, timeoutMs } = {}) {
+/**
+ * 视频生成（纯 OpenAI 兼容语义，不绑定任何厂商，可对接 Agnes / Kling / Runway / Sora / 万相 / 清影…）。
+ * 入参为标准视频参数：
+ *   prompt, seconds(字符串"4"-"12"), aspect_ratio, size, mode(text|keyframe|reference),
+ *   first_frame(首帧图生视频), images[](参考图), audios[](参考音频), n, engine
+ * 同时兼容旧别名 duration / ratio / image，避免老调用方回归。
+ * 各家差异（创建路径 / 轮询路径 / 任务 id 字段名）一律交给「设置面板配置 + callMedia 通用提取」，
+ * 不在此处写任何厂商特例 —— 因此换个模型只改配置，不改代码。
+ */
+export async function generateVideo({ prompt, seconds, duration, aspect_ratio, ratio, size, mode, first_frame, image, images, audios, n, engine, onProgress, signal, timeoutMs } = {}) {
   const c = requireConfig('video');
   const payload = { prompt };
-  if (duration) payload.duration_seconds = duration;
-  if (ratio) payload.ratio = ratio;
+  const sec = seconds ?? duration;
+  if (sec != null) payload.seconds = String(sec);
+  payload.aspect_ratio = aspect_ratio ?? ratio ?? '16:9';
+  if (size) payload.size = size;
+  payload.mode = mode || 'text';
+  if (c.size) payload.size = c.size;                        // 尺寸随厂商配置，不写死（Agnes 720P / Sora 720p …）
+  const ff = first_frame ?? image;
+  if (ff) payload.first_frame = ff;
+  if (images && images.length) payload.images = images;
+  if (audios && audios.length) payload.audios = audios;
+  if (n) payload.n = n;
   if (engine) payload.engine = engine;
-  if (mode) payload.mode = mode;
-  if (image) payload.image_url = image;
   const out = await callMedia({
     baseUrl: c.baseUrl,
     apiKey: c.apiKey,

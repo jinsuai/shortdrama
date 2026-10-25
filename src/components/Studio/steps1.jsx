@@ -15,6 +15,16 @@ import { generatePanelImage } from '../../lib/image-workflows.js';
 
 const P = { padding: '18px 22px' };
 
+// 文本模型显示名：配置什么模型就显示什么，未配置时落回通用文案（不写死厂商）
+const TEXT_MODEL_LABEL = (() => {
+  try {
+    const m = getModelConfig('text')?.model;
+    return m && String(m).trim() ? String(m).trim() : '文本模型';
+  } catch {
+    return '文本模型';
+  }
+})();
+
 // ── 实体抽取参数 ────────────────────────────────────────────────
 // 旧实现把整篇剧本原样塞进提示词、maxTokens 只有 2000：长剧本必然被截断成半个 JSON，
 // 解析直接失败。现改为：按 12000 字分段逐段抽取 + 每段失败重试 2 次（重试时降温并强调 JSON）。
@@ -205,7 +215,7 @@ export function ScriptStep({ project, update, log, onOpenEntity }) {
             {list.length ? T.script.recognized(list.length) : '点击「提取实体」以识别'}
           </div>
           {loading && (
-            <div style={{ fontSize: 11, color: '#6d28d9', marginTop: 6 }}>正在调用 DeepSeek 识别中…</div>
+            <div style={{ fontSize: 11, color: '#6d28d9', marginTop: 6 }}>正在调用 {TEXT_MODEL_LABEL} 识别中…</div>
           )}
           {okMsg && !loading && (
             <div style={{ fontSize: 11, color: '#34d399', marginTop: 6 }}>✓ {okMsg}</div>
@@ -290,7 +300,7 @@ export function ArtDirectionStep({ project, update, log, applyStyle, onApply }) 
     positive: project?.artDirection?.positive || T.presets[0].tags.join(', '),
     negative: project?.artDirection?.negative || 'photorealistic, 3d render, bright colors, sharp details',
   });
-  // DeepSeek 读剧本推荐（3 种）
+  // 文本模型读剧本推荐（3 种）
   const [aiStyles, setAiStyles] = useState([]);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState(null);
@@ -321,7 +331,7 @@ export function ArtDirectionStep({ project, update, log, applyStyle, onApply }) 
     onApply?.();
   };
 
-  /** 让 DeepSeek 读剧本，推荐 3 种贴合的艺术风格 */
+  /** 让文本模型读剧本，推荐 3 种贴合的艺术风格 */
   const analyzeScript = async () => {
     setAiErr(null);
     setAiMsg(null);
@@ -357,7 +367,7 @@ export function ArtDirectionStep({ project, update, log, applyStyle, onApply }) 
         };
       });
       setAiStyles(styles);
-      setAiMsg(`DeepSeek 已根据剧本推荐 ${styles.length} 种风格`);
+      setAiMsg(`${TEXT_MODEL_LABEL} 已根据剧本推荐 ${styles.length} 种风格`);
       log?.(`AI 已根据剧本推荐 ${styles.length} 种风格`);
     } catch (e) {
       const m = e?.message || String(e);
@@ -402,7 +412,7 @@ export function ArtDirectionStep({ project, update, log, applyStyle, onApply }) 
         <Btn variant="primary" onClick={apply}>{T.art.apply}</Btn>
       </div>
 
-      {/* AI 智能推荐（DeepSeek 读剧本）+ 用户自建 */}
+      {/* AI 智能推荐（文本模型读剧本）+ 用户自建 */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
           <Icon name="sparkle" size={14} color="#f59e0b" />
@@ -418,7 +428,7 @@ export function ArtDirectionStep({ project, update, log, applyStyle, onApply }) 
         </div>
       </div>
       {aiBusy && (
-        <div style={{ fontSize: 11.5, color: '#6d28d9', marginBottom: 10 }}>正在调用 DeepSeek 阅读剧本…</div>
+        <div style={{ fontSize: 11.5, color: '#6d28d9', marginBottom: 10 }}>正在调用 {TEXT_MODEL_LABEL} 阅读剧本…</div>
       )}
       {aiMsg && !aiBusy && (
         <div style={{ fontSize: 11.5, color: '#34d399', marginBottom: 10 }}>✓ {aiMsg}</div>

@@ -28,6 +28,25 @@ const subCard = {
   background: 'rgba(15,23,42,0.032)', border: '1px solid rgba(15,23,42,0.096)',
 };
 
+// 内联字段帮助：每个输入框下面一行小字说明
+const helpStyle = {
+  fontSize: 10.5, color: '#8a93a3', marginTop: 5, lineHeight: 1.5,
+};
+function HelpHint({ children }) {
+  return <div style={helpStyle}>{children}</div>;
+}
+
+// 按字段名给的填写说明（与具体模态无关，跨模态通用）
+const FIELD_HELP = {
+  preset: '选厂商可一键填入地址；选「自定义」则手动填 Base URL。预设只填地址，Key / 模型名仍需自己填。',
+  baseUrl: '模型服务的根地址，填到「/v1」或域名根即可。末尾斜杠会自动处理，无需手填。',
+  apiKey: '服务商提供的密钥，仅保存在本机浏览器，不会上传到任何服务器。',
+  model: '必填。该模态实际调用的模型 ID，如 gpt-4o-mini / deepseek-chat / qwen-max。只填 Key 不填模型名会被下游拒绝。',
+  endpoint: '接口路径。OpenAI 兼容服务多为固定值（如 /images/generations）。视频 / 音乐若不在默认路径，在此覆盖。可填相对路径（拼到 Base URL 后）或完整 URL。',
+  size: '视频分辨率，厂商特定。部分服务强制特定值（如 720P 必填）；其他按文档填，或留空用服务默认。',
+  pollPath: '任务型 API 专用：先返回任务 id、再轮询拿结果（Kling / Runway / Sora 等）。填 /tasks/{id} 或完整轮询 URL；{id} 会自动替换成任务 id。直出型服务（返回即结果 URL）留空即可。',
+};
+
 export function ApiSettings() {
   const [cfg, setCfg] = useState(() => {
     const all = getAllModelConfig();
@@ -39,18 +58,26 @@ export function ApiSettings() {
         apiKey: all[m]?.apiKey ?? '',
         model: all[m]?.model ?? meta.defaultModel ?? '',
         endpoint: all[m]?.endpoint ?? meta.defaultEndpoint ?? '',
+        pollPath: all[m]?.pollPath ?? '',
+        size: all[m]?.size ?? '',
       };
     });
     return init;
   });
   const [saved, setSaved] = useState(false);
+  // 改动未保存时给出显式提醒：徽章只代表「输入框里有值」，不代表已写入 localStorage。
+  // 少了这条提示，用户很容易「填完就走」，然后被下游报「未配置」而完全对不上。
+  const [dirty, setDirty] = useState(false);
 
-  const setField = (m, key, val) =>
+  const setField = (m, key, val) => {
     setCfg((c) => ({ ...c, [m]: { ...c[m], [key]: val } }));
+    setDirty(true);
+  };
 
   const onSave = () => {
     saveAllModelConfig(cfg);
     setSaved(true);
+    setDirty(false);
     setTimeout(() => setSaved(false), 2200);
   };
 
@@ -70,6 +97,16 @@ export function ApiSettings() {
         开源版不依赖任何后端，所有生成直连你自备的模型 API。配置按「模态」保存到本机浏览器（localStorage），不会上传。
         以 OpenAI 兼容接口为统一抽象，可对接 OpenAI / DeepSeek / 通义 / 智谱 / Moonshot / 本地 Ollama 等。
       </div>
+
+      {dirty && (
+        <div style={{
+          marginBottom: 12, padding: '9px 11px', borderRadius: 8,
+          background: 'rgba(245,158,11,.12)', border: '1px solid rgba(245,158,11,.38)',
+          fontSize: 11.5, color: '#92400e', lineHeight: 1.62,
+        }}>
+          有修改尚未保存。下面的「已配置」只表示输入框里有值，<b>必须点底部「保存全部配置」</b>后才会写入本机并生效。
+        </div>
+      )}
 
       {ORDER.map((m) => {
         const meta = MODALITIES[m] || {};
@@ -104,6 +141,7 @@ export function ApiSettings() {
                 ))}
                 <option value="__custom__">自定义…</option>
               </select>
+              <HelpHint>{FIELD_HELP.preset}</HelpHint>
             </div>
 
             {/* baseUrl */}
@@ -114,6 +152,7 @@ export function ApiSettings() {
                 placeholder={meta.defaultBase || 'https://api.openai.com/v1'}
                 onChange={(e) => setField(m, 'baseUrl', e.target.value)}
               />
+              <HelpHint>{FIELD_HELP.baseUrl}</HelpHint>
             </div>
 
             {/* apiKey */}
@@ -124,6 +163,7 @@ export function ApiSettings() {
                 placeholder="sk-...（仅存于本机）"
                 onChange={(e) => setField(m, 'apiKey', e.target.value)}
               />
+              <HelpHint>{FIELD_HELP.apiKey}</HelpHint>
             </div>
 
             {/* model */}
@@ -134,17 +174,43 @@ export function ApiSettings() {
                 placeholder={meta.placeholderModel || 'gpt-4o-mini'}
                 onChange={(e) => setField(m, 'model', e.target.value)}
               />
+              <HelpHint>{FIELD_HELP.model}</HelpHint>
             </div>
 
             {/* endpoint（仅视频 / 音乐等非标准模态） */}
             {showEndpoint && (
-              <div style={{ marginBottom: 0 }}>
+              <div style={{ marginBottom: 12 }}>
                 <label style={labelStyle}>接口路径 (Endpoint)</label>
                 <input
                   style={inputStyle} value={c.endpoint || ''}
                   placeholder={meta.defaultEndpoint || '/video/generations'}
                   onChange={(e) => setField(m, 'endpoint', e.target.value)}
                 />
+                <HelpHint>{FIELD_HELP.endpoint}</HelpHint>
+              </div>
+            )}
+            {/* size（视频尺寸，厂商特定，可选） */}
+            {m === 'video' && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={labelStyle}>尺寸 (Size，可选)</label>
+                <input
+                  style={inputStyle} value={c.size || ''}
+                  placeholder="720P（部分服务必填；其他按文档填或留空）"
+                  onChange={(e) => setField(m, 'size', e.target.value)}
+                />
+                <HelpHint>{FIELD_HELP.size}</HelpHint>
+              </div>
+            )}
+            {/* pollPath（任务型 API：先返回 id 再轮询，如 Kling / Runway / Sora） */}
+            {showEndpoint && (
+              <div style={{ marginBottom: 0 }}>
+                <label style={labelStyle}>轮询路径 (Poll Path，任务型 API 用)</label>
+                <input
+                  style={inputStyle} value={c.pollPath || ''}
+                  placeholder="/tasks/{id} 或完整轮询 URL"
+                  onChange={(e) => setField(m, 'pollPath', e.target.value)}
+                />
+                <HelpHint>{FIELD_HELP.pollPath}</HelpHint>
               </div>
             )}
           </div>

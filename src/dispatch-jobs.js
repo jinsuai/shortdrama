@@ -77,9 +77,63 @@ export async function img2imgImage({ image_url, prompt, negative_prompt = '', se
  * 统一的「提交 GPU/模型 任务」。开源版把 type 映射到对应模态的直连生成。
  * 兼容旧 VideoGenBoard 的调用形态：runDispatchJob({ type, payload, onProgress, timeoutMs })
  */
+/**
+ * 把视频 UI（商业版 H3 调度机语义）的 payload 翻译为纯 OpenAI 兼容视频语义。
+ * 目的：视频模型差异巨大（Agnes / Kling / Runway / Sora / 万相 / 清影…），但只有「创建路径、
+ * 轮询路径、任务 id 字段名」不同，这些差异全交给「设置面板配置 + callMedia 通用提取」。
+ * 语义层（模式 / 画幅 / 参考图 / 首帧）在此统一归一，做到「换个模型只改配置、不改代码」。
+ */
+function resolutionToRatio(resolution) {
+  if (!resolution || typeof resolution !== 'string') return null;
+  const m = resolution.match(/(\d+)\s*[x×]\s*(\d+)/i);
+  if (!m) return null;
+  const w = +m[1], h = +m[2];
+  const r = w / h;
+  const table = [[21 / 9, '21:9'], [16 / 9, '16:9'], [4 / 3, '4:3'], [1, '1:1'], [3 / 4, '3:4'], [9 / 16, '9:16']];
+  let best = '16:9', diff = Infinity;
+  for (const [v, name] of table) {
+    const d = Math.abs(v - r);
+    if (d < diff) { diff = d; best = name; }
+  }
+  return best;
+}
+
+/** 收集 payload 中 ref_image_0 / ref_image_1 … 这类带序号的参考资源，按序返回数组 */
+function collectIndexed(p, prefix) {
+  const arr = [];
+  let i = 0;
+  while (p[`${prefix}${i}`] != null) { arr.push(p[`${prefix}${i}`]); i++; }
+  if (!arr.length) {
+    Object.keys(p).filter((k) => k.startsWith(prefix)).sort().forEach((k) => {
+      if (typeof p[k] === 'string') arr.push(p[k]);
+    });
+  }
+  return arr;
+}
+
+// H3 模式 → OpenAI/Agnes 通用模式：文生视频 / 图生视频(首尾帧) / 参考图(角色场景)视频
+const VIDEO_MODE_ALIAS = { t2v: 'text', i2v: 'keyframe', s2v: 'reference' };
+
+function normalizeVideoPayload(p = {}) {
+  const mode = VIDEO_MODE_ALIAS[p.mode] || p.mode || 'text';
+  const seconds = p.duration != null ? String(p.duration) : '5';
+  const aspect = p.ratio || resolutionToRatio(p.resolution) || '16:9';
+  const out = { prompt: p.prompt, mode, seconds, aspect_ratio: aspect };
+  if (p.size) out.size = p.size;                            // 尺寸随厂商（Agnes 720P / Sora 720p …），由设置面板按厂商填
+  if (p.first_frame) out.first_frame = p.first_frame;       // 图生视频首帧
+  if (p.last_frame) out.last_frame = p.last_frame;          // 图生视频尾帧
+  const images = Array.isArray(p.images) ? p.images : collectIndexed(p, 'ref_image_');
+  if (images.length) out.images = images;                   // 参考图（角色/场景）
+  const audios = Array.isArray(p.audios) ? p.audios : collectIndexed(p, 'ref_audio_');
+  if (audios.length) out.audios = audios;                   // 参考音频
+  return out;
+}
+
 export async function runDispatchJob({ type, payload = {}, onProgress = () => {}, timeoutMs = 600000, signal } = {}) {
   if (type === 'video' || type === 'intro' || type === 'video_shots') {
-    const out = await pGenerateVideo({ ...payload, onProgress, timeoutMs, signal });
+    // 批量 shots（旧 H3 长视频专属）不在通用视频模型能力内，降级为取首段单生成。
+    const norm = normalizeVideoPayload(type === 'video_shots' ? (payload.shots?.[0] || payload) : payload);
+    const out = await pGenerateVideo({ ...norm, onProgress, timeoutMs, signal });
     return { result_url: out.resultUrl, ...out };
   }
   if (type === 'tts') {
