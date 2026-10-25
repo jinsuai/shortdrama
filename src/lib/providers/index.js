@@ -54,7 +54,7 @@ export async function generateText(messages, opts = {}) {
  * 支持图生图（参考图）：当传入 referenceImage / referenceImages 时，会把参考图放进
  * 「图片」模态配置的参考图字段名（imageField，默认 image_url）。各厂商字段名不一
  * （image_url / image / init_image …），在「设置 → 模型配置 → 图片」里改 imageField 即可，无需改代码。
- *   - 纯文生图（不传参考图）：只发 model/prompt/size/n，兼容 Agnes 等严格接口；
+ *   - 纯文生图（不传参考图）：只发 model/prompt/size/n，兼容对未知字段严格校验的服务；
  *   - 图生图：参考图随请求发出，由所选模型按参考图出图（四视图即走这条）。
  * 负向词同理走可配置的 negativeField（默认 negative_prompt），仅当提供时发送。
  *
@@ -92,6 +92,15 @@ export async function generateImage(prompt, opts = {}) {
 }
 
 /**
+ * 旧 H3 语义 → 通用语义的模式别名表（单一真相来源，供 generateVideo 与 dispatch-jobs 共用）。
+ * 🔴 必须放在通用层而不是适配层：调用方有两条路径——runDispatchJob（走 normalizeVideoPayload）
+ *    和 generatePanelVideo（直接调 generateVideo，不经过适配层）。若只在适配层翻译，
+ *    第二条路径会把 'i2v' 原样发出去，而通用视频接口认的是 text|keyframe|reference 之类标准取值。
+ * 仅当命中已知别名时替换，其余值原样透传（避免误伤以 i2v 为合法取值的厂商）。
+ */
+export const VIDEO_MODE_ALIAS = { t2v: 'text', i2v: 'keyframe', s2v: 'reference' };
+
+/**
  * 视频生成（纯 OpenAI 兼容语义，不绑定任何厂商，可对接 Agnes / Kling / Runway / Sora / 万相 / 清影…）。
  * 入参为标准视频参数：
  *   prompt, seconds(字符串"4"-"12"), aspect_ratio, size, mode(text|keyframe|reference),
@@ -100,21 +109,34 @@ export async function generateImage(prompt, opts = {}) {
  * 各家差异（创建路径 / 轮询路径 / 任务 id 字段名）一律交给「设置面板配置 + callMedia 通用提取」，
  * 不在此处写任何厂商特例 —— 因此换个模型只改配置，不改代码。
  */
-export async function generateVideo({ prompt, seconds, duration, aspect_ratio, ratio, size, mode, first_frame, image, images, audios, n, engine, onProgress, signal, timeoutMs } = {}) {
+export async function generateVideo({ prompt, seconds, duration, aspect_ratio, ratio, size, mode, first_frame, last_frame, image, images, audios, n, engine, onProgress, signal, timeoutMs } = {}) {
   const c = requireConfig('video');
   const payload = { prompt };
   const sec = seconds ?? duration;
   if (sec != null) payload.seconds = String(sec);
   payload.aspect_ratio = aspect_ratio ?? ratio ?? '16:9';
   if (size) payload.size = size;
-  payload.mode = mode || 'text';
-  if (c.size) payload.size = c.size;                        // 尺寸随厂商配置，不写死（Agnes 720P / Sora 720p …）
+  if (c.size) payload.size = c.size;                        // 尺寸随厂商配置，不写死
+  // 模式：设置里显式选的优先（调用方传的多半是代码写死的默认值，不代表用户意图）
+  const rawMode = c.videoMode || mode;
+  payload.mode = VIDEO_MODE_ALIAS[rawMode] || rawMode || 'text';   // 旧语义(i2v/s2v/t2v)统一翻译成通用语义
+
+  // 🔴 媒体素材「有什么就发什么」，三类互不顶替、互不裁剪：
+  //   first_frame / last_frame —— 只来自首/尾帧入参（旧别名 image 同属首帧语义，不代表参考图）
+  //   images                   —— 只来自参考图入参，不会因为没首帧就被拿去当首帧
+  //   audios                   —— 只来自参考音频入参
+  // 没有的字段直接不发（不补空值、不做兜底），数量的上限也交给厂商自行校验。
   const ff = first_frame ?? image;
   if (ff) payload.first_frame = ff;
-  if (images && images.length) payload.images = images;
-  if (audios && audios.length) payload.audios = audios;
+  if (last_frame) payload.last_frame = last_frame;
+  const imgs = (Array.isArray(images) ? images : []).filter(Boolean);
+  if (imgs.length) payload.images = imgs;
+  const aus = (Array.isArray(audios) ? audios : []).filter(Boolean);
+  if (aus.length) payload.audios = aus;
   if (n) payload.n = n;
-  if (engine) payload.engine = engine;
+  // engine 属于厂商自定义字段：默认不发送（调用方传的 'h3' 是商业版渠道遗留，
+  // 对直连用户自有模型的开源版没有意义）；若所用服务确实需要，在设置里填「附加字段 engine」。
+  if (c.engine) payload.engine = c.engine;
   const out = await callMedia({
     baseUrl: c.baseUrl,
     apiKey: c.apiKey,

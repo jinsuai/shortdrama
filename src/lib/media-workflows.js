@@ -21,7 +21,7 @@ import {
  * @param {string} p.mode     - 保留字段，透传
  * @param {string} p.prompt   - 画面描述
  * @param {string} [p.firstFrame] / [p.lastFrame] - 图生视频首/尾帧
- * @param {string[]} [p.images] - 参考图（多图参考取第一张作为首帧）
+ * @param {string[]} [p.images] - 参考图（身份/风格约束，独立下发，不会顶替首帧）
  * @param {number} [p.duration]
  * @param {string} [p.ratio]
  * @param {Function} [p.onProgress]
@@ -32,10 +32,15 @@ export async function generatePanelVideo({
   audio = '', onProgress = () => {}, signal, timeoutMs,
 } = {}) {
   if (!String(prompt || '').trim()) throw new Error('请先填写画面提示词');
-  const image = firstFrame || images[0] || lastFrame || '';
+  // 🔴 三类素材语义不同，必须各自独立下发，绝不能互相顶替：
+  //   首帧/尾帧 = 画面起止帧；参考图 = 身份/风格约束；参考音频 = 声音线索。
+  //   所以这里**不做**任何「没首帧就拿参考图顶上」的兜底 —— 没有的就是没有。
   const out = await pGenerateVideo({
     prompt,
-    image,
+    first_frame: firstFrame,
+    last_frame: lastFrame,
+    images,
+    audios: audio ? [audio] : [],
     duration,
     ratio,
     engine,

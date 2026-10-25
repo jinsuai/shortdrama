@@ -11,6 +11,7 @@ import {
   generateVideo as pGenerateVideo,
   generateTTS as pGenerateTTS,
   generateMusic as pGenerateMusic,
+  VIDEO_MODE_ALIAS,
 } from './lib/providers/index.js';
 import { concatVideos as ffmpegConcat } from './lib/ffmpeg.js';
 
@@ -111,15 +112,15 @@ function collectIndexed(p, prefix) {
   return arr;
 }
 
-// H3 模式 → OpenAI/Agnes 通用模式：文生视频 / 图生视频(首尾帧) / 参考图(角色场景)视频
-const VIDEO_MODE_ALIAS = { t2v: 'text', i2v: 'keyframe', s2v: 'reference' };
+// 模式别名表 VIDEO_MODE_ALIAS 已从 ./lib/providers/index.js 导入（通用层单一真相来源）。
+// generateVideo 内部也会做一次归一化，此处翻译只为让适配层产出的 payload 本身即标准语义。
 
 function normalizeVideoPayload(p = {}) {
   const mode = VIDEO_MODE_ALIAS[p.mode] || p.mode || 'text';
   const seconds = p.duration != null ? String(p.duration) : '5';
   const aspect = p.ratio || resolutionToRatio(p.resolution) || '16:9';
   const out = { prompt: p.prompt, mode, seconds, aspect_ratio: aspect };
-  if (p.size) out.size = p.size;                            // 尺寸随厂商（Agnes 720P / Sora 720p …），由设置面板按厂商填
+  if (p.size) out.size = p.size;                            // 尺寸取值由厂商决定，在设置面板按其文档填写
   if (p.first_frame) out.first_frame = p.first_frame;       // 图生视频首帧
   if (p.last_frame) out.last_frame = p.last_frame;          // 图生视频尾帧
   const images = Array.isArray(p.images) ? p.images : collectIndexed(p, 'ref_image_');

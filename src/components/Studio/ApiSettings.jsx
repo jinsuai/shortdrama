@@ -45,6 +45,8 @@ const FIELD_HELP = {
   endpoint: '接口路径，可填相对路径（拼到 Base URL 后）或完整 URL。图片默认 /images/generations；图生图若模型要求别的路径（如 /images/edits 或厂商自定义路径），在此覆盖。',
   size: '视频分辨率，厂商特定。部分服务强制特定值（如 720P 必填）；其他按文档填，或留空用服务默认。',
   pollPath: '任务型 API 专用：先返回任务 id、再轮询拿结果（Kling / Runway / Sora 等）。填 /tasks/{id} 或完整轮询 URL；{id} 会自动替换成任务 id。直出型服务（返回即结果 URL）留空即可。',
+  videoMode: '请求里 mode 字段的取值。素材（首帧 / 尾帧 / 参考图 / 参考音频）一律按「有什么就提交什么」独立发送，不会因为选了某一类就被丢弃；此项只影响 mode 本身。留空则跟随调用方默认。',
+  engine: '厂商自定义的引擎标识字段。默认不发送；只有你的服务商明确要求时才填。',
   imageField: '图生图字段名：参考图在请求体里的 JSON 字段名，留空默认 image_url。多数 OpenAI 兼容网关用 image_url；若你的模型用 image / init_image / image_urls 等，直接在此改，无需改代码。',
   negativeField: '负向词字段名：负向提示词在请求体里的字段名，留空默认 negative_prompt。仅在提示词带负向词时才发送该字段。',
 };
@@ -64,6 +66,8 @@ export function ApiSettings() {
         size: all[m]?.size ?? '',
         imageField: all[m]?.imageField ?? '',
         negativeField: all[m]?.negativeField ?? '',
+        videoMode: all[m]?.videoMode ?? '',
+        engine: all[m]?.engine ?? '',
       };
     });
     return init;
@@ -206,6 +210,35 @@ export function ApiSettings() {
                   onChange={(e) => setField(m, 'size', e.target.value)}
                 />
                 <HelpHint>{FIELD_HELP.size}</HelpHint>
+              </div>
+            )}
+            {/* videoMode（决定使用哪类素材：文字 / 首尾帧 / 参考图音频） */}
+            {m === 'video' && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={labelStyle}>生成模式 (Mode，可选)</label>
+                <select
+                  value={c.videoMode || ''}
+                  onChange={(e) => setField(m, 'videoMode', e.target.value)}
+                  style={{ ...inputStyle, cursor: 'pointer' }}
+                >
+                  <option value="">跟随调用方（默认）</option>
+                  <option value="text">纯文字生成</option>
+                  <option value="keyframe">首尾帧控制画面起止</option>
+                  <option value="reference">参考图 / 参考音频</option>
+                </select>
+                <HelpHint>{FIELD_HELP.videoMode}</HelpHint>
+              </div>
+            )}
+            {/* engine（厂商自定义字段，留空不发送） */}
+            {m === 'video' && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={labelStyle}>附加字段 engine（可选）</label>
+                <input
+                  style={inputStyle} value={c.engine || ''}
+                  placeholder="留空则不发送该字段"
+                  onChange={(e) => setField(m, 'engine', e.target.value)}
+                />
+                <HelpHint>{FIELD_HELP.engine}</HelpHint>
               </div>
             )}
             {/* pollPath（任务型 API：先返回 id 再轮询，如 Kling / Runway / Sora） */}
