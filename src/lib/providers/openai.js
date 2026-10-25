@@ -27,6 +27,32 @@ function authHeaders(apiKey) {
   return h;
 }
 
+/**
+ * 把厂商返回的错误转成可读中文提示。
+ * 重点覆盖高频配置错误：模型名不可用 / 鉴权失败 / 限流，而不是抛一坨原始 JSON。
+ */
+function formatApiError(label, status, rawText) {
+  const text = String(rawText || '');
+  let msg = '';
+  let code = '';
+  try {
+    const j = JSON.parse(text);
+    code = j?.error?.code || j?.code || '';
+    msg = j?.error?.message || j?.message || '';
+  } catch { /* 非 JSON，保留原文 */ }
+  const probe = msg || text;
+  if (code === 'model_not_found' || /model_not_found|不支持模型|模型不存在|model.*(not found|does not exist)|not supported/i.test(probe)) {
+    return `${label}模型不可用：${msg || '当前 Key 不支持该模型'}。请在「设置 → 模型配置」改用该服务商提供的可用模型名。`;
+  }
+  if (status === 401 || status === 403) {
+    return `${label}鉴权失败 (${status})：API Key 无效或无权限，请检查 Key 是否正确、是否属于当前分组。`;
+  }
+  if (status === 429) {
+    return `${label}请求过于频繁 (429)：已触发限流，请降低并发或稍后重试。`;
+  }
+  return `${label}调用失败 (${status}): ${probe.slice(0, 400)}`;
+}
+
 /** 宽口径深找媒体地址，兼容 url / video_url / output_url / result_url / data[].url 等 */
 export function deepFindUrl(obj, depth = 0) {
   if (!obj || depth > 6) return '';
@@ -62,7 +88,7 @@ export async function callChat({ baseUrl, apiKey, model, messages, temperature =
   });
   if (!res.ok) {
     const t = await res.text().catch(() => '');
-    throw new Error(`文本模型调用失败 (${res.status}): ${t.slice(0, 400)}`);
+    throw new Error(formatApiError('文本模型', res.status, t));
   }
   const data = await res.json();
   return data?.choices?.[0]?.message?.content || '';
@@ -80,7 +106,7 @@ export async function callImage({ baseUrl, apiKey, model, prompt, size = '1024x1
   });
   if (!res.ok) {
     const t = await res.text().catch(() => '');
-    throw new Error(`图片模型调用失败 (${res.status}): ${t.slice(0, 400)}`);
+    throw new Error(formatApiError('图片模型', res.status, t));
   }
   const data = await res.json();
   const items = data?.data || [];
@@ -100,7 +126,7 @@ export async function callMedia({ baseUrl, apiKey, model, endpoint, pollPath = '
   });
   if (!res.ok) {
     const t = await res.text().catch(() => '');
-    throw new Error(`媒体模型调用失败 (${res.status}): ${t.slice(0, 400)}`);
+    throw new Error(formatApiError('媒体模型', res.status, t));
   }
   const data = await res.json();
 
@@ -148,7 +174,7 @@ export async function callTTS({ baseUrl, apiKey, model, input, voice = 'default'
   });
   if (!res.ok) {
     const t = await res.text().catch(() => '');
-    throw new Error(`配音模型调用失败 (${res.status}): ${t.slice(0, 400)}`);
+    throw new Error(formatApiError('配音模型', res.status, t));
   }
   const blob = await res.blob();
   return URL.createObjectURL(blob);

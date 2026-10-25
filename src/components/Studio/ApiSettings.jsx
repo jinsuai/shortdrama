@@ -42,9 +42,11 @@ const FIELD_HELP = {
   baseUrl: '模型服务的根地址，填到「/v1」或域名根即可。末尾斜杠会自动处理，无需手填。',
   apiKey: '服务商提供的密钥，仅保存在本机浏览器，不会上传到任何服务器。',
   model: '必填。该模态实际调用的模型 ID，如 gpt-4o-mini / deepseek-chat / qwen-max。只填 Key 不填模型名会被下游拒绝。',
-  endpoint: '接口路径。OpenAI 兼容服务多为固定值（如 /images/generations）。视频 / 音乐若不在默认路径，在此覆盖。可填相对路径（拼到 Base URL 后）或完整 URL。',
+  endpoint: '接口路径，可填相对路径（拼到 Base URL 后）或完整 URL。图片默认 /images/generations；图生图若模型要求别的路径（如 /images/edits 或厂商自定义路径），在此覆盖。',
   size: '视频分辨率，厂商特定。部分服务强制特定值（如 720P 必填）；其他按文档填，或留空用服务默认。',
   pollPath: '任务型 API 专用：先返回任务 id、再轮询拿结果（Kling / Runway / Sora 等）。填 /tasks/{id} 或完整轮询 URL；{id} 会自动替换成任务 id。直出型服务（返回即结果 URL）留空即可。',
+  imageField: '图生图字段名：参考图在请求体里的 JSON 字段名，留空默认 image_url。多数 OpenAI 兼容网关用 image_url；若你的模型用 image / init_image / image_urls 等，直接在此改，无需改代码。',
+  negativeField: '负向词字段名：负向提示词在请求体里的字段名，留空默认 negative_prompt。仅在提示词带负向词时才发送该字段。',
 };
 
 export function ApiSettings() {
@@ -60,6 +62,8 @@ export function ApiSettings() {
         endpoint: all[m]?.endpoint ?? meta.defaultEndpoint ?? '',
         pollPath: all[m]?.pollPath ?? '',
         size: all[m]?.size ?? '',
+        imageField: all[m]?.imageField ?? '',
+        negativeField: all[m]?.negativeField ?? '',
       };
     });
     return init;
@@ -112,7 +116,10 @@ export function ApiSettings() {
         const meta = MODALITIES[m] || {};
         const c = cfg[m] || {};
         const configured = !!(c.apiKey && c.apiKey.trim());
-        const showEndpoint = m === 'video' || m === 'music';
+        // 图片也暴露 endpoint：图生图模型常常不在默认的 /images/generations 路径上
+        const showEndpoint = m === 'video' || m === 'music' || m === 'image';
+        // 轮询只有任务型（视频 / 音乐）用得上；图片是同步直出，不给它显示，免得误导
+        const showPoll = m === 'video' || m === 'music';
         const presetValue =
           PROVIDER_PRESETS.find((p) => p.base === (c.baseUrl || ''))?.base || '__custom__';
 
@@ -202,7 +209,7 @@ export function ApiSettings() {
               </div>
             )}
             {/* pollPath（任务型 API：先返回 id 再轮询，如 Kling / Runway / Sora） */}
-            {showEndpoint && (
+            {showPoll && (
               <div style={{ marginBottom: 0 }}>
                 <label style={labelStyle}>轮询路径 (Poll Path，任务型 API 用)</label>
                 <input
@@ -212,6 +219,29 @@ export function ApiSettings() {
                 />
                 <HelpHint>{FIELD_HELP.pollPath}</HelpHint>
               </div>
+            )}
+            {/* 图片专属：图生图的参考图字段名 / 负向词字段名（换模型只改这两项，不改代码） */}
+            {m === 'image' && (
+              <>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={labelStyle}>参考图字段名（图生图，可选）</label>
+                  <input
+                    style={inputStyle} value={c.imageField || ''}
+                    placeholder="image_url（留空则用默认）"
+                    onChange={(e) => setField(m, 'imageField', e.target.value)}
+                  />
+                  <HelpHint>{FIELD_HELP.imageField}</HelpHint>
+                </div>
+                <div style={{ marginBottom: 0 }}>
+                  <label style={labelStyle}>负向词字段名（可选）</label>
+                  <input
+                    style={inputStyle} value={c.negativeField || ''}
+                    placeholder="negative_prompt（留空则用默认）"
+                    onChange={(e) => setField(m, 'negativeField', e.target.value)}
+                  />
+                  <HelpHint>{FIELD_HELP.negativeField}</HelpHint>
+                </div>
+              </>
             )}
           </div>
         );

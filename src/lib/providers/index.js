@@ -48,19 +48,35 @@ export async function generateText(messages, opts = {}) {
   });
 }
 
-/** 图片生成。prompt 为最终提示词；negative 仅对支持负向词的引擎有效（作为 extra 透传） */
+/**
+ * 图片生成。prompt 为最终提示词；size / n 为标准 OpenAI 兼容字段。
+ *
+ * 支持图生图（参考图）：当传入 referenceImage / referenceImages 时，会把参考图放进
+ * 「图片」模态配置的参考图字段名（imageField，默认 image_url）。各厂商字段名不一
+ * （image_url / image / init_image …），在「设置 → 模型配置 → 图片」里改 imageField 即可，无需改代码。
+ *   - 纯文生图（不传参考图）：只发 model/prompt/size/n，兼容 Agnes 等严格接口；
+ *   - 图生图：参考图随请求发出，由所选模型按参考图出图（四视图即走这条）。
+ * 负向词同理走可配置的 negativeField（默认 negative_prompt），仅当提供时发送。
+ *
+ * 接口路径（endpoint）、参考图字段名、负向词字段名全部可在设置里覆盖，
+ * 因此「换个支持图生图的模型只改配置、不改代码」。
+ */
 export async function generateImage(prompt, opts = {}) {
   const c = requireConfig('image');
   const extra = {};
-  if (opts.negative) extra.negative_prompt = opts.negative;
-  // 参考图透传：各厂商字段名不一，这里统一放进 image_url（单张传字符串、多张传数组）。
-  // 是否真正生效取决于用户在「设置 → 模型配置 → 图片」所选的模型；
-  // 纯文生图接口会忽略该字段，退回按提示词出图。
+  // 参考图（图生图）：取调用方传入的参考图，按可配置字段名发送。
   const refs = (Array.isArray(opts.referenceImages) ? opts.referenceImages : [])
     .filter(Boolean).slice(0, 3);
   const single = opts.referenceImage || refs[0] || '';
-  if (refs.length > 1) extra.image_url = refs;
-  else if (single) extra.image_url = single;
+  const imageField = (c.imageField && c.imageField.trim()) || 'image_url';
+  if (refs.length > 1) extra[imageField] = refs;
+  else if (single) extra[imageField] = single;
+  // 负向词：仅当提供时发送，字段名可配置（默认 negative_prompt）
+  const neg = opts.negative || '';
+  if (neg.trim()) {
+    const negField = (c.negativeField && c.negativeField.trim()) || 'negative_prompt';
+    extra[negField] = neg;
+  }
   const urls = await callImage({
     baseUrl: c.baseUrl,
     apiKey: c.apiKey,

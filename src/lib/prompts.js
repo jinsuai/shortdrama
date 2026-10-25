@@ -508,7 +508,14 @@ export const WB_PROMPTS = {
     prop: (n, d) => `Single prop design of ${n}. ${d}. One object centered on a clean white background, isolated, no other objects, no scenery, high quality, masterpiece.`,
   },
   threeViews: {
-    character: (n, d) => `Three-view character design sheet. Front view, Side view, Back view — same character appearance, face, hairstyle, and clothing across all three views. Standing pose, neutral expression, consistent details, clean white background, simple background, high quality, masterpiece.`,
+    // 人物四视图：写法对齐本地 T10「Krea2做剧图像4视图」工作流 node143（Krea2EditGroundedEncode）。
+    // T10 是图生图——身份由参考图提供，提示词只下「转成四格角色表」这一个指令并指定视角，
+    // 不堆外貌形容词（避免与参考图打架、也避免把四格挤变形）。视角顺序与 T10 完全一致：
+    // 面部特写 → 正面全身 → 侧面全身 → 背面全身（共四格）。
+    character: (n, d) => {
+      const id = [n, d].filter(Boolean).join('. ');
+      return `Convert the character in the reference image into a character sheet showing four views: a face close-up, a front full body, a side full body, and a back full body. Keep exactly the same face, hairstyle, clothing and body proportions across all four views, consistent identity.${id ? ` Character: ${id}.` : ''} Clean simple background, high quality, masterpiece.`;
+    },
     scene: (n, d) => `Three-angle concept views of the scene ${n}. ${d}. The same environment shown from three different angles, no people, consistent lighting, architecture and style across all views, wide shot, high quality, masterpiece.`,
     prop: (n, d) => `Three-angle concept views of the prop ${n}. ${d}. The same single prop shown from three different angles (front, side, back), clean white background, consistent shape and details across all views, high quality, masterpiece.`,
   },

@@ -1,6 +1,6 @@
 ﻿import React, { useState, useEffect, useRef } from "react";
 import { getBackendBaseUrl } from "../../lib/backend-url.js";
-import { downloadUrl, saveBlob } from "../../utils.js";
+import { downloadUrl, saveBlob, characterFourView } from "../../utils.js";
 import { runDispatchJob, api, generateImage, img2imgImage, extractTail, concatVideos } from "../../dispatch-jobs.js";
 import { isLoggedIn, precheckCredits, getCreditBalance } from "../../utils/backend-api.js";
 import { getAppSetting, saveAppSetting } from "../../utils/app-settings.js";
@@ -802,11 +802,13 @@ export const VideoGenBoard = ({ project, update, log, externalFirstFrame, onClea
     if (sh.selectedCharIds && sh.selectedCharIds.length > 0) {
       const selectedChars = characters.filter(c => sh.selectedCharIds.includes(c.id));
       if (selectedChars.length > 0) {
-        const missingFourView = selectedChars.filter(c => !c.fourView && c.image);
+        // 🔴 四视图字段名历史分裂（fourView / threeViewsUrl / fourViews），统一走 characterFourView 取值，
+        //    否则「工作台生成的四视图」读不到、会被误判为未生成而静默回退主图。
+        const missingFourView = selectedChars.filter(c => !characterFourView(c) && c.image);
         if (missingFourView.length > 0) {
           log(`⚠️ ${missingFourView.map(c => c.name).join("、")} 未生成四视图，暂用人物参考图（建议先生成四视图，锁定效果更强）`);
         }
-        return selectedChars.map(c => c.fourView || c.image).filter(Boolean);
+        return selectedChars.map(c => characterFourView(c) || c.image).filter(Boolean);
       }
     }
     return [];
@@ -1355,7 +1357,7 @@ ${shotTexts}`;
       if (selectedMode === "i2v" || selectedMode === "s2v") {
         // 图生视频（API-U01 / wan22 人物参考）：使用人物+场景参考图；s2v=人物+场景参考，i2v+prem=首帧+人物+场景
         const charImages = getShotCharacterImages(sh);
-        const selChars = characters.filter(c => (sh.selectedCharIds || []).includes(c.id) && (c.fourView || c.image));
+        const selChars = characters.filter(c => (sh.selectedCharIds || []).includes(c.id) && (characterFourView(c) || c.image));
         const subjectNames = selChars.map(c => c.name || "").filter(Boolean);
         // 角色外观描述（与 ref_image 人物图顺序一一对应）：H3 锁人物需要「文字外观 + <Picture N> 图片引用」双重锚定
         const subjectDescs = selChars.map(c => extractAppearance(c) || "").filter(Boolean);
@@ -1646,7 +1648,7 @@ ${shotTexts}`;
         workflowParams.seed = seed;
         log(`随机种子：${seed}`);
         // 角色参考绑定（与 i2v/s2v 分支一致：从已选角色提取名字，H3 锁人物用）
-        const ia2vSelChars = characters.filter(c => (sh.selectedCharIds || []).includes(c.id) && (c.fourView || c.image));
+        const ia2vSelChars = characters.filter(c => (sh.selectedCharIds || []).includes(c.id) && (characterFourView(c) || c.image));
         const ia2vSubjectNames = ia2vSelChars.map(c => c.name || "").filter(Boolean);
         if (ia2vSubjectNames.length > 0) {
           workflowParams.subject_names = ia2vSubjectNames;
@@ -1947,7 +1949,7 @@ ${shotTexts}`;
         propRefs.forEach((u, i) => { shotItem[`ref_image_${afterSceneIdx + i}`] = u; });
         // 多角色锁脸：subject_names 传全部分镜绑定角色名（调度机据此切分人物/场景并生成锁脸定义）
         const shotCharNames = (sh.characters || [])
-          .filter(c => charImages.includes(c.fourView) || charImages.includes(c.image))
+          .filter(c => charImages.includes(characterFourView(c)) || charImages.includes(c.image))
           .map(c => c.name || "").filter(Boolean);
         if (shotCharNames.length > 0) shotItem.subject_names = shotCharNames;
         shots.push(shotItem);

@@ -64,7 +64,8 @@ export async function generatePanelImage({ prompt, negative = '', ratio = '9:16'
   const out = await pGenerateImage(finalPrompt, {
     size: size || `${px.width}x${px.height}`,
     negative: negative || '',
-    // 参考图交给 providers 透传；不支持参考图的模型会自动忽略，退化为文生图。
+    // 参考图交给 providers 透传：按「图片」模态配置的 imageField 字段名随请求发出（图生图）。
+    // 四视图即走这条（参考图 = 主视图）。纯文生图接口遇到该字段会报错，请改用支持图生图的模型。
     referenceImage: singleRef,
     referenceImages: refs.length ? refs : (singleRef ? [singleRef] : []),
     signal,
@@ -101,4 +102,7 @@ const RATIO_PX = {
   '1:1': { width: 1024, height: 1024 },
   '3:4': { width: 864, height: 1152 },
   '4:3': { width: 1152, height: 864 },
+  // 横版 3:2 —— 四格角色表专用：与本地 T10 四视图工作流的 1536x1024 一致。
+  // 四视图是「一张图里横排四格」，用竖屏会把四格压变形。
+  '3:2': { width: 1536, height: 1024 },
 };

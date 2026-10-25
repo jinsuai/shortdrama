@@ -45,16 +45,40 @@ export function getVideoSize(key) {
   );
 }
 
-// 取角色参考图（用于视频生成时保持角色一致性）。
-// 优先级：用户上传的整张 referenceSheet > AI 生成的四视图（正面/侧面/背面/特写）。
-// 返回图片 URL/dataURL 数组（空数组表示无参考图）；调度机会透传给视频 worker 合成参考表。
+/**
+ * 🔴 角色四视图 URL —— 全项目唯一真相来源，任何地方要「角色多视角参考图」都调这个函数。
+ *
+ * 历史坑：四视图落库字段名在不同入口分裂过 ——
+ *   工作台(Studio.handleGenerateImage) 写 threeViewsUrl
+ *   角色管理(CharacterManager)          写 fourView
+ *   3D 面板(DirectorPanel)              写 fourViews{front,left,back,right}
+ * 而视频生成只读 fourView，导致「在工作台生成了四视图，视频却拿不到、静默回退主图」。
+ * 这里把所有历史字段都认一遍，新旧存档都能读到，避免改一次数据结构就要迁移一次数据。
+ */
+export function characterFourView(c) {
+  if (!c) return '';
+  if (c.fourView) return c.fourView;
+  if (c.threeViewsUrl) return c.threeViewsUrl;
+  if (c.fourViewUrl) return c.fourViewUrl;
+  const fv = c.fourViews;
+  if (Array.isArray(fv) && fv.length) return (fv[0] && fv[0].url) || '';
+  if (fv && typeof fv === 'object') return fv.front || '';
+  return '';
+}
+
+/**
+ * 取角色参考图（用于视频生成时保持角色一致性）。
+ * 优先级：用户上传的整张 referenceSheet > 四视图（四个视角各自一张）> 单张四视图表。
+ * 返回图片 URL/dataURL 数组（空数组表示无参考图）；调度机会透传给视频 worker 合成参考表。
+ */
 export function characterReferenceImages(c) {
   if (!c) return [];
   if (c.referenceSheet) return [c.referenceSheet];
   if (Array.isArray(c.fourViews) && c.fourViews.length) {
     return c.fourViews.map((v) => v && v.url).filter(Boolean);
   }
-  return [];
+  const four = characterFourView(c);
+  return four ? [four] : [];
 }
 
 export function defaultProject(title = "新短剧") {

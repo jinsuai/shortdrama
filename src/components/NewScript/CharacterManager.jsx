@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { api, generateImage } from "../../dispatch-jobs.js";
 import { isLoggedIn, precheckCredits, deductCredits, getCreditBalance } from "../../utils/backend-api.js";
 import { getPrice } from "../../utils/pricing-utils.js";
+import { characterFourView } from "../../utils.js";
 
 // 生图风格选项
 const STYLE_OPTIONS = [
@@ -554,10 +555,11 @@ ${content.slice(0, 5000)}
                   🖼 三视图
                 </button>
               )}
-              {c.fourView && (
+              {/* 🔴 四视图字段名历史分裂（fourView / threeViewsUrl），统一取值，工作台生成的也能显示 */}
+              {characterFourView(c) && (
                 <button
                   style={{ position: "absolute", right: 4, bottom: 4, padding: "2px 7px", fontSize: 10, border: "1px solid rgba(255,255,255,0.4)", borderRadius: 4, background: "rgba(0,0,0,0.6)", color: "#fff", cursor: "pointer", zIndex: 2 }}
-                  onClick={(e) => { e.stopPropagation(); setPreviewImage(c.fourView); }}
+                  onClick={(e) => { e.stopPropagation(); setPreviewImage(characterFourView(c)); }}
                 >
                   🧩 四视图
                 </button>

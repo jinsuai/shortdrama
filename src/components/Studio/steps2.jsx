@@ -272,15 +272,17 @@ function FrameRow({ shot, idx, index, active, generating, onClick, onAction, onG
 
 /**
  * 软件内可选图片（角色图 / 场景图 / 道具图 / 首帧图 / 素材图）——参考图槽位从这里选。
- * opts.view=true 时，角色参考图优先用「三视图」(threeViewsUrl) 而非主图(imageUrl)，
- *   用于动态演绎角色驱动（r2v）：三视图是正/侧/背参考，比单张主图更利于人物一致性。
- * （分镜步骤的 RefSlots 走默认，仍用主图，避免图生图编辑被三视图干扰。）
+ * opts.view=true 时，角色参考图优先用四视图而非主图(imageUrl)，
+ *   用于动态演绎角色驱动（r2v）：四视图是正/侧/背/特写参考，比单张主图更利于人物一致性。
+ * （分镜步骤的 RefSlots 走默认，仍用主图，避免图生图编辑被四视图干扰。）
+ * 🔴 四视图字段名历史分裂（fourView / threeViewsUrl / fourViews），统一走 characterFourView，
+ *    否则在角色管理生成的四视图这里读不到。
  */
 function collectLibImages(project, opts = {}) {
   const preferView = !!opts.view;
   const list = [];
   (project?.materials?.characters || []).forEach((c, i) => {
-    const tv = c.threeViewsUrl;
+    const tv = characterFourView(c);
     const mv = c.imageUrl;
     if (!tv && !mv) return;
     const useView = preferView && tv;

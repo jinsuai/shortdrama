@@ -68,7 +68,11 @@ export function Studio({
     // 🔴 比例修复：读「设置 → 默认比例」里对应资产的画幅（之前硬编码 9:16 导致设置不生效）；
     //    头像特写固定 1:1（设计稿约定），人物四视图走 T10 固定尺寸不受比例影响
     const ratioKey = asset?.type === 'scene' ? 'scene' : asset?.type === 'prop' ? 'prop' : 'character';
-    const ratio = slot === 'avatar' ? '1:1' : defaultRatio(ratioKey);
+    // 人物四视图 = 一张图里横排四格（面部特写/正面/侧面/背面），对齐 T10 的 1536x1024 横版；
+    // 跟着角色画幅走竖屏 9:16 会把四格压变形，所以这里固定横版 3:2。
+    const ratio = slot === 'avatar' ? '1:1'
+      : (slot === 'threeViews' && isHuman) ? '3:2'
+      : defaultRatio(ratioKey);
     const referenceImage = slot === 'threeViews' && isHuman ? (asset.masterUrl || '') : '';
     log?.(`正在生成：${asset.name} · ${slot}`);
     try {
@@ -78,8 +82,15 @@ export function Studio({
       // 写回项目素材（角色 / 场景 / 道具三张表都找一遍）
       const mats = project?.materials || {};
       // master 同时写 imageUrl，作为资产库 / 分镜里的封面
+      // 🔴 四视图额外写一份 fourView：视频生成 / 角色管理读的是这个字段，
+      //    只写 threeViewsUrl 会导致「明明生成了四视图，视频却静默回退主图」。
       const patch = (arr = []) => arr.map((x) => (x.id === asset.id
-        ? { ...x, [`${slot}Url`]: resultUrl, ...(slot === 'master' ? { imageUrl: resultUrl } : {}) }
+        ? {
+            ...x,
+            [`${slot}Url`]: resultUrl,
+            ...(slot === 'master' ? { imageUrl: resultUrl } : {}),
+            ...(slot === 'threeViews' && isHuman ? { fourView: resultUrl } : {}),
+          }
         : x));
       update?.({
         ...project,
