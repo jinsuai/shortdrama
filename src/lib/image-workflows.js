@@ -64,7 +64,7 @@ export async function generatePanelImage({ prompt, negative = '', ratio = '9:16'
   const out = await pGenerateImage(finalPrompt, {
     size: size || `${px.width}x${px.height}`,
     negative: negative || '',
-    // 参考图交给 providers 透传：按「图片」模态配置的 imageField 字段名随请求发出（图生图）。
+    // 参考图交给 providers 透传：固定以 image_url 字段随请求发出（图生图）。
     // 四视图即走这条（参考图 = 主视图）。纯文生图接口遇到该字段会报错，请改用支持图生图的模型。
     referenceImage: singleRef,
     referenceImages: refs.length ? refs : (singleRef ? [singleRef] : []),

@@ -49,33 +49,40 @@ export async function generateText(messages, opts = {}) {
 }
 
 /**
+ * 通用负向词：图片生成默认带上的质量兜底（糊、畸形、水印、构图残缺等常见问题）。
+ * 调用方显式传了 negative 时以调用方为准。用户无需在设置里配置。
+ */
+export const DEFAULT_IMAGE_NEGATIVE = 'low quality, worst quality, blurry, lowres, jpeg artifacts, watermark, text, signature, logo, deformed, bad anatomy, bad proportions, extra limbs, extra fingers, missing fingers, cropped, out of frame';
+
+/**
  * 图片生成。prompt 为最终提示词；size / n 为标准 OpenAI 兼容字段。
  *
- * 支持图生图（参考图）：当传入 referenceImage / referenceImages 时，会把参考图放进
- * 「图片」模态配置的参考图字段名（imageField，默认 image_url）。各厂商字段名不一
- * （image_url / image / init_image …），在「设置 → 模型配置 → 图片」里改 imageField 即可，无需改代码。
- *   - 纯文生图（不传参考图）：只发 model/prompt/size/n，兼容对未知字段严格校验的服务；
- *   - 图生图：参考图随请求发出，由所选模型按参考图出图（四视图即走这条）。
- * 负向词同理走可配置的 negativeField（默认 negative_prompt），仅当提供时发送。
+ * 支持图生图（参考图）：传入 referenceImage / referenceImages 时，参考图以固定的
+ * `image_url` 字段随请求发出（四视图即用主视图作参考）。字段名固定，不暴露给用户配置。
+ *   - 纯文生图（不传参考图）：不发该字段；
+ *   - 图生图：参考图随请求发出，由所选模型按参考图出图。
+ * 负向词走固定字段 `negative_prompt`，内容默认取 DEFAULT_IMAGE_NEGATIVE（通用负向词），
+ * 调用方显式传了 negative 时以调用方为准。是否提交由开关决定，见下。
  *
- * 接口路径（endpoint）、参考图字段名、负向词字段名全部可在设置里覆盖，
- * 因此「换个支持图生图的模型只改配置、不改代码」。
+ * 负向词是否提交由「设置 → 图片模型 → 提交负向词」开关决定（默认开）。
+ * 关掉后请求体里不再出现 negative_prompt —— 部分服务对未知字段做严格校验，
+ * 带负向词会直接报错，此时关掉即可，无需改代码。
+ *
+ * 需要换接口路径时只改「设置 → 图片模型 → 接口路径」，其余无需代码改动。
  */
 export async function generateImage(prompt, opts = {}) {
   const c = requireConfig('image');
   const extra = {};
-  // 参考图（图生图）：取调用方传入的参考图，按可配置字段名发送。
+  // 参考图（图生图）：字段名固定 image_url（通用 OpenAI 兼容约定）
   const refs = (Array.isArray(opts.referenceImages) ? opts.referenceImages : [])
     .filter(Boolean).slice(0, 3);
   const single = opts.referenceImage || refs[0] || '';
-  const imageField = (c.imageField && c.imageField.trim()) || 'image_url';
-  if (refs.length > 1) extra[imageField] = refs;
-  else if (single) extra[imageField] = single;
-  // 负向词：仅当提供时发送，字段名可配置（默认 negative_prompt）
-  const neg = opts.negative || '';
-  if (neg.trim()) {
-    const negField = (c.negativeField && c.negativeField.trim()) || 'negative_prompt';
-    extra[negField] = neg;
+  if (refs.length > 1) extra.image_url = refs;
+  else if (single) extra.image_url = single;
+  // 负向词：字段名固定 negative_prompt，内容默认取内置通用负向词（调用方传了以调用方为准）。
+  // 仅当设置里开启「提交负向词」时才发送 —— 默认开启，未配置该开关的老配置同样开启。
+  if (c.sendNegative !== false && c.sendNegative !== 'false') {
+    extra.negative_prompt = (opts.negative || '').trim() || DEFAULT_IMAGE_NEGATIVE;
   }
   const urls = await callImage({
     baseUrl: c.baseUrl,

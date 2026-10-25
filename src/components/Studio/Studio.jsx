@@ -73,7 +73,12 @@ export function Studio({
     const ratio = slot === 'avatar' ? '1:1'
       : (slot === 'threeViews' && isHuman) ? '3:2'
       : defaultRatio(ratioKey);
+    // 四视图固定用主视图作参考（图生图），身份由参考图给，提示词只下版式指令。
+    // 没有主视图就没有参考图，会退化成纯文生图（四格前后不一致），所以显式提醒而不是静默降级。
     const referenceImage = slot === 'threeViews' && isHuman ? (asset.masterUrl || '') : '';
+    if (slot === 'threeViews' && isHuman && !referenceImage) {
+      log?.(`⚠️ ${asset.name} 还没有主视图，四视图缺参考图，将按提示词直接生成（人物一致性会下降）`);
+    }
     log?.(`正在生成：${asset.name} · ${slot}`);
     try {
       const { resultUrl, workflowId } = await generatePanelImage({

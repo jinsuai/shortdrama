@@ -47,8 +47,7 @@ const FIELD_HELP = {
   pollPath: '任务型 API 专用：先返回任务 id、再轮询拿结果（Kling / Runway / Sora 等）。填 /tasks/{id} 或完整轮询 URL；{id} 会自动替换成任务 id。直出型服务（返回即结果 URL）留空即可。',
   videoMode: '请求里 mode 字段的取值。素材（首帧 / 尾帧 / 参考图 / 参考音频）一律按「有什么就提交什么」独立发送，不会因为选了某一类就被丢弃；此项只影响 mode 本身。留空则跟随调用方默认。',
   engine: '厂商自定义的引擎标识字段。默认不发送；只有你的服务商明确要求时才填。',
-  imageField: '图生图字段名：参考图在请求体里的 JSON 字段名，留空默认 image_url。多数 OpenAI 兼容网关用 image_url；若你的模型用 image / init_image / image_urls 等，直接在此改，无需改代码。',
-  negativeField: '负向词字段名：负向提示词在请求体里的字段名，留空默认 negative_prompt。仅在提示词带负向词时才发送该字段。',
+  sendNegative: '图片请求是否带上 negative_prompt（负向词）。默认勾选，使用内置通用负向词（糊、畸形、水印等）。若你的服务对未知字段做严格校验、带负向词就报错，取消勾选即可，请求体里将不再出现该字段。',
 };
 
 export function ApiSettings() {
@@ -64,10 +63,11 @@ export function ApiSettings() {
         endpoint: all[m]?.endpoint ?? meta.defaultEndpoint ?? '',
         pollPath: all[m]?.pollPath ?? '',
         size: all[m]?.size ?? '',
-        imageField: all[m]?.imageField ?? '',
-        negativeField: all[m]?.negativeField ?? '',
         videoMode: all[m]?.videoMode ?? '',
         engine: all[m]?.engine ?? '',
+        // 图片：是否随请求提交 negative_prompt。默认开启（缺失该键亦视为开启），
+        // 严格校验未知字段的服务可取消勾选。
+        sendNegative: all[m]?.sendNegative !== false,
       };
     });
     return init;
@@ -200,6 +200,21 @@ export function ApiSettings() {
                 <HelpHint>{FIELD_HELP.endpoint}</HelpHint>
               </div>
             )}
+            {/* 负向词开关（图片专有：部分服务严格校验字段，带 negative_prompt 会直接报错） */}
+            {m === 'image' && (
+              <div style={{ marginBottom: 0 }}>
+                <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={c.sendNegative !== false}
+                    onChange={(e) => setField(m, 'sendNegative', e.target.checked)}
+                    style={{ cursor: 'pointer', margin: 0 }}
+                  />
+                  提交负向词 (negative_prompt)
+                </label>
+                <HelpHint>{FIELD_HELP.sendNegative}</HelpHint>
+              </div>
+            )}
             {/* size（视频尺寸，厂商特定，可选） */}
             {m === 'video' && (
               <div style={{ marginBottom: 12 }}>
@@ -252,29 +267,6 @@ export function ApiSettings() {
                 />
                 <HelpHint>{FIELD_HELP.pollPath}</HelpHint>
               </div>
-            )}
-            {/* 图片专属：图生图的参考图字段名 / 负向词字段名（换模型只改这两项，不改代码） */}
-            {m === 'image' && (
-              <>
-                <div style={{ marginBottom: 12 }}>
-                  <label style={labelStyle}>参考图字段名（图生图，可选）</label>
-                  <input
-                    style={inputStyle} value={c.imageField || ''}
-                    placeholder="image_url（留空则用默认）"
-                    onChange={(e) => setField(m, 'imageField', e.target.value)}
-                  />
-                  <HelpHint>{FIELD_HELP.imageField}</HelpHint>
-                </div>
-                <div style={{ marginBottom: 0 }}>
-                  <label style={labelStyle}>负向词字段名（可选）</label>
-                  <input
-                    style={inputStyle} value={c.negativeField || ''}
-                    placeholder="negative_prompt（留空则用默认）"
-                    onChange={(e) => setField(m, 'negativeField', e.target.value)}
-                  />
-                  <HelpHint>{FIELD_HELP.negativeField}</HelpHint>
-                </div>
-              </>
             )}
           </div>
         );
