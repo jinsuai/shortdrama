@@ -41,6 +41,7 @@ export async function generatePanelVideo({
     last_frame: lastFrame,
     images,
     audios: audio ? [audio] : [],
+    negative,
     duration,
     ratio,
     engine,

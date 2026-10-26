@@ -660,6 +660,27 @@ export function defaultModelKey(category) {
  */
 export function videoModelOptions() {
   const list = MODELS.video || [];
+  const cfg = readVideoCfg();
+  const model = cfg.model;
+  const host = cfg.host;
+  const endpoint = cfg.endpoint;
+
+  return list.map((o) => ({
+    ...o,
+    label: model || '视频模型（未配置）',
+    desc: model
+      ? [host, endpoint].filter(Boolean).join(' ') + ' · 首帧/尾帧/参考图/音频按需提交'
+      : '请先在「设置 → 视频模型」填写接口地址、密钥与模型名',
+  }));
+}
+
+/** 视频模型显示名（日志 / 状态栏用）：配了什么就显示什么，未配置时用中性文案 */
+export function videoModelLabel() {
+  return readVideoCfg().model || '视频模型';
+}
+
+/** 读视频配置里 UI 需要的展示字段（model / 域名 / 接口路径） */
+function readVideoCfg() {
   let model = '';
   let base = '';
   let endpoint = '';
@@ -669,20 +690,12 @@ export function videoModelOptions() {
     base = String(c.baseUrl || '').trim();
     endpoint = String(c.endpoint || '').trim();
   } catch {}
-
   // 卡片里只显示域名：完整 baseUrl 太长会把两行文案撑破
   let host = base;
   try {
     if (base) host = new URL(base).host || base;
   } catch {}
-
-  return list.map((o) => ({
-    ...o,
-    label: model || '视频模型（未配置）',
-    desc: model
-      ? [host, endpoint].filter(Boolean).join(' ') + ' · 首帧/尾帧/参考图/音频按需提交'
-      : '请先在「设置 → 视频模型」填写接口地址、密钥与模型名',
-  }));
+  return { model, base, host, endpoint };
 }
 
 /** 画幅比例 */

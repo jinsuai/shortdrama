@@ -122,7 +122,7 @@ export const VIDEO_MODE_ALIAS = { t2v: 'text', i2v: 'keyframe', s2v: 'reference'
  * 各家差异（创建路径 / 轮询路径 / 任务 id 字段名）一律交给「设置面板配置 + callMedia 通用提取」，
  * 不在此处写任何厂商特例 —— 因此换个模型只改配置，不改代码。
  */
-export async function generateVideo({ prompt, seconds, duration, aspect_ratio, ratio, size, mode, first_frame, last_frame, image, images, audios, n, engine, onProgress, signal, timeoutMs } = {}) {
+export async function generateVideo({ prompt, seconds, duration, aspect_ratio, ratio, size, mode, first_frame, last_frame, image, images, audios, negative, n, engine, onProgress, signal, timeoutMs } = {}) {
   const c = requireConfig('video');
   const payload = { prompt };
   const sec = seconds ?? duration;
@@ -130,6 +130,10 @@ export async function generateVideo({ prompt, seconds, duration, aspect_ratio, r
   payload.aspect_ratio = aspect_ratio ?? ratio ?? '16:9';
   if (size) payload.size = size;
   if (c.size) payload.size = c.size;                        // 尺寸随厂商配置，不写死
+  // 负向词：只有调用方真的填了才发（不自作主张补内置词，避免不支持该字段的服务直接 400）。
+  // 字段名允许配置，不认 negative_prompt 的厂商改配置即可。
+  const negText = String(negative || '').trim();
+  if (negText) payload[c.negativeField || 'negative_prompt'] = negText;
   // 模式：设置里显式选的优先（调用方传的多半是代码写死的默认值，不代表用户意图）
   const rawMode = c.videoMode || mode;
   payload.mode = VIDEO_MODE_ALIAS[rawMode] || rawMode || 'text';   // 旧语义(i2v/s2v/t2v)统一翻译成通用语义

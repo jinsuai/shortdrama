@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { convertFileSrc } from '../../lib/tauri-shim.js';
-import { T, RATIOS, RESOLUTIONS, SHOT_TYPES, defaultModelKey, defaultRatio, defaultPolishEngine, videoWf, videoModelOptions } from './i18n';
+import { T, RATIOS, RESOLUTIONS, SHOT_TYPES, defaultModelKey, defaultRatio, defaultPolishEngine, videoWf, videoModelOptions, videoModelLabel } from './i18n';
 import { Icon, Btn, Pill, Seg, Empty, Slider, Modal } from './ui';
 import { generatePanelVideo, generatePanelTTS } from '../../lib/media-workflows.js';
 import { extractTail } from '../../dispatch-jobs.js';
@@ -685,7 +685,7 @@ export function MotionStep({ project, update, log }) {
           { url: playUrl, remoteUrl: resultUrl, path: videoPath, engine, mode: 'unified', wf, at: Date.now() }],
       };
     });
-    log?.(`第 ${idx + 1} 个分镜视频已生成（${wf} · ${duration}s）`);
+    log?.(`第 ${idx + 1} 个分镜视频已生成（${videoModelLabel()} · ${duration}s）`);
   };
 
   const submit = async () => {
