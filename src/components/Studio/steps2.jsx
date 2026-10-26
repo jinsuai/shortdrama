@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { convertFileSrc } from '../../lib/tauri-shim.js';
 import { T, RATIOS, RESOLUTIONS, SHOT_TYPES, defaultModelKey, defaultRatio, defaultPolishEngine, videoWf, videoModelOptions, videoModelLabel } from './i18n';
 import { Icon, Btn, Pill, Seg, Empty, Slider, Modal } from './ui';
