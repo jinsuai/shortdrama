@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { convertFileSrc } from '../../lib/tauri-shim.js';
-import { T, MODELS, RATIOS, RESOLUTIONS, SHOT_TYPES, defaultModelKey, defaultRatio, defaultPolishEngine, videoWf } from './i18n';
+import { T, RATIOS, RESOLUTIONS, SHOT_TYPES, defaultModelKey, defaultRatio, defaultPolishEngine, videoWf, videoModelOptions } from './i18n';
 import { Icon, Btn, Pill, Seg, Empty, Slider, Modal } from './ui';
 import { generatePanelVideo, generatePanelTTS } from '../../lib/media-workflows.js';
 import { extractTail } from '../../dispatch-jobs.js';
@@ -1184,6 +1184,8 @@ export function MotionContext({ project, update }) {
   const [shotType, setShotType] = useState(saved.shotType || 'single');
   const [res, setRes] = useState('720p');
   const [batch, setBatch] = useState('1x');
+  // 视频模型卡片：显示「设置 → 视频模型」里实配的模型名，不再写死厂商/工作流
+  const videoOptions = useMemo(() => videoModelOptions(), []);
 
   const put = (patch) => update?.({ ...project, motion: { ...saved, ...patch } });
 
@@ -1215,7 +1217,7 @@ export function MotionContext({ project, update }) {
             <div style={{ fontSize: 10.5, color: '#4b5563', marginBottom: 8 }}>
               {T.motion.model}（Model）
             </div>
-            <ModelCards value={engine} onChange={(v) => put({ engine: v })} options={MODELS.video} />
+            <ModelCards value={engine} onChange={(v) => put({ engine: v })} options={videoOptions} />
 
             <div style={{ marginTop: 14, marginBottom: 10 }}>
               <div style={{ fontSize: 10.5, color: '#4b5563', marginBottom: 4 }}>

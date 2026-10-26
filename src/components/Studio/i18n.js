@@ -3,6 +3,9 @@
  * 参考界面中英混杂，此处统一为中文；模型名替换为我们已部署的工作流。
  */
 
+// 读「设置 → 模型配置」里用户实际填的模型名，界面文案必须与实际调用的一致
+import { getModelConfig } from '../../lib/providers/settings.js';
+
 export const T = {
   // ── 品牌 ──
   brand: '烬序 JINSU',
@@ -470,11 +473,12 @@ export const MODELS = {
     { key: 'qwen',  label: 'SDXL 文生图', desc: '通用文生图 / 角色主视图（WF01）', wf: 'WF01_img_t2i' },
     { key: 'krea2', label: 'SDXL 角色设定', desc: '人物设定 / 多视图合图（WF02）', wf: 'WF02_img_charset' },
   ],
-  // ② 视频引擎 —— Wan2.2 已弃用（G02/G18 不再使用），统一走 H3 三合一 WF05
-  //    （9图参考 + 首尾帧 + 驱动音频，一个流吃下全部模式）。
-  //    wf 仅作占位（defaultWf('video') 用），真实路由走 videoWf(engine, mode)。
+  // ② 视频 —— 开源版直连用户自备的视频模型 API（OpenAI 兼容），不再是"部署好的工作流"。
+  //    ⚠️ 不要在这里写死任何厂商名 / 工作流名：界面显示的模型名一律由
+  //    videoModelOptions() 从「设置 → 视频模型」读实配值生成，换模型无需改代码。
+  //    key 保留 'h3' 仅用于兼容旧设置里存过的 engine 值（只透传，不参与路由选择）。
   video: [
-    { key: 'h3', label: 'MiniMax H3', desc: '三合一：9图参考 + 首尾帧 + 驱动音频（WF05）', wf: 'WF05_vid_av3in1' },
+    { key: 'h3', label: '视频模型', desc: '直连设置里配置的视频模型', wf: 'WF05_vid_av3in1' },
   ],
   // ③ 配音 / TTS
   tts: [
@@ -644,6 +648,41 @@ export function defaultModelKey(category) {
     if (saved.defaultModels && saved.defaultModels[category]) return saved.defaultModels[category];
   } catch {}
   return list[0].key;
+}
+
+/**
+ * 视频模型卡片——按「设置 → 视频模型」里实际配置的模型动态生成。
+ *
+ * 为什么需要它：开源版已从「面板工作流」改为直连用户自备的视频 API，
+ * 但面板上曾写死 "MiniMax H3 / 三合一…（WF05）"，用户换任何模型都会显示 H3，误导。
+ * 现在 label 取配置里的 model 名、desc 显示实际接口，未配置时明确提示去设置，
+ * 全程不硬编码厂商——换成 Kling / Runway / Sora / 通义都不需要改代码。
+ */
+export function videoModelOptions() {
+  const list = MODELS.video || [];
+  let model = '';
+  let base = '';
+  let endpoint = '';
+  try {
+    const c = getModelConfig('video');
+    model = String(c.model || '').trim();
+    base = String(c.baseUrl || '').trim();
+    endpoint = String(c.endpoint || '').trim();
+  } catch {}
+
+  // 卡片里只显示域名：完整 baseUrl 太长会把两行文案撑破
+  let host = base;
+  try {
+    if (base) host = new URL(base).host || base;
+  } catch {}
+
+  return list.map((o) => ({
+    ...o,
+    label: model || '视频模型（未配置）',
+    desc: model
+      ? [host, endpoint].filter(Boolean).join(' ') + ' · 首帧/尾帧/参考图/音频按需提交'
+      : '请先在「设置 → 视频模型」填写接口地址、密钥与模型名',
+  }));
 }
 
 /** 画幅比例 */
