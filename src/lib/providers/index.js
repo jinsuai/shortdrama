@@ -73,12 +73,17 @@ export const DEFAULT_IMAGE_NEGATIVE = 'low quality, worst quality, blurry, lowre
 export async function generateImage(prompt, opts = {}) {
   const c = requireConfig('image');
   const extra = {};
-  // 参考图（图生图）：字段名固定 image_url（通用 OpenAI 兼容约定）
+  // 参考图（图生图）：字段名不写死 —— 各厂商不同（image_url / image / init_image / reference_image…），
+  // 由「设置 → 图片模型 → 参考图字段名」配置，留空默认 image_url（最常见的 OpenAI 兼容写法）。
+  // 值格式同样配置化：默认「单图发字符串、多图发数组」；部分服务（如声明 string[] 的 image 字段）
+  // 可勾选「参考图按数组发送」，强制单图也用 [url]。
+  const refField = (c.imageField || '').trim() || 'image_url';
+  const asArray = c.imageFieldArray === true || c.imageFieldArray === 'true';
   const refs = (Array.isArray(opts.referenceImages) ? opts.referenceImages : [])
     .filter(Boolean).slice(0, 3);
   const single = opts.referenceImage || refs[0] || '';
-  if (refs.length > 1) extra.image_url = refs;
-  else if (single) extra.image_url = single;
+  const refList = refs.length ? refs : (single ? [single] : []);
+  if (refList.length) extra[refField] = (asArray || refList.length > 1) ? refList : refList[0];
   // 负向词：字段名固定 negative_prompt，内容默认取内置通用负向词（调用方传了以调用方为准）。
   // 仅当设置里开启「提交负向词」时才发送 —— 默认开启，未配置该开关的老配置同样开启。
   if (c.sendNegative !== false && c.sendNegative !== 'false') {
@@ -88,6 +93,7 @@ export async function generateImage(prompt, opts = {}) {
     baseUrl: c.baseUrl,
     apiKey: c.apiKey,
     model: c.model,
+    endpoint: c.endpoint,   // 图片接口路径可配（如 /images/edits 或厂商自定义），留空走默认
     prompt,
     size: opts.size || '1024x1024',
     n: opts.n || 1,

@@ -48,6 +48,8 @@ const FIELD_HELP = {
   videoMode: '请求里 mode 字段的取值。素材（首帧 / 尾帧 / 参考图 / 参考音频）一律按「有什么就提交什么」独立发送，不会因为选了某一类就被丢弃；此项只影响 mode 本身。留空则跟随调用方默认。',
   engine: '厂商自定义的引擎标识字段。默认不发送；只有你的服务商明确要求时才填。',
   sendNegative: '图片请求是否带上 negative_prompt（负向词）。默认勾选，使用内置通用负向词（糊、畸形、水印等）。若你的服务对未知字段做严格校验、带负向词就报错，取消勾选即可，请求体里将不再出现该字段。',
+  imageField: '图生图时「参考图」放在哪个字段名下。各厂商不同：常见 image_url / image / init_image / reference_image。留空默认 image_url。填错会导致参考图不被识别——请求会退化成纯文生图或被直接拒绝。',
+  imageFieldArray: '参考图的值格式。默认关闭：单图发字符串、多图发数组。若服务把该字段声明为数组（如有些服务的 image 是 string[]），勾选后即使只有一张图也发 [url]。',
 };
 
 export function ApiSettings() {
@@ -65,6 +67,9 @@ export function ApiSettings() {
         size: all[m]?.size ?? '',
         videoMode: all[m]?.videoMode ?? '',
         engine: all[m]?.engine ?? '',
+        // 图片：参考图字段名（留空由后端默认 image_url）与是否按数组发送。
+        imageField: all[m]?.imageField ?? '',
+        imageFieldArray: all[m]?.imageFieldArray === true,
         // 图片：是否随请求提交 negative_prompt。默认开启（缺失该键亦视为开启），
         // 严格校验未知字段的服务可取消勾选。
         sendNegative: all[m]?.sendNegative !== false,
@@ -200,20 +205,43 @@ export function ApiSettings() {
                 <HelpHint>{FIELD_HELP.endpoint}</HelpHint>
               </div>
             )}
-            {/* 负向词开关（图片专有：部分服务严格校验字段，带 negative_prompt 会直接报错） */}
+            {/* 图片专有：参考图字段名 + 数组开关 + 负向词开关（全部配置化，不绑定任何厂商） */}
             {m === 'image' && (
-              <div style={{ marginBottom: 0 }}>
-                <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0, cursor: 'pointer' }}>
+              <>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={labelStyle}>参考图字段名 (Image Field)</label>
                   <input
-                    type="checkbox"
-                    checked={c.sendNegative !== false}
-                    onChange={(e) => setField(m, 'sendNegative', e.target.checked)}
-                    style={{ cursor: 'pointer', margin: 0 }}
+                    style={inputStyle} value={c.imageField || ''}
+                    placeholder="image_url（留空默认）"
+                    onChange={(e) => setField(m, 'imageField', e.target.value)}
                   />
-                  提交负向词 (negative_prompt)
-                </label>
-                <HelpHint>{FIELD_HELP.sendNegative}</HelpHint>
-              </div>
+                  <HelpHint>{FIELD_HELP.imageField}</HelpHint>
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={c.imageFieldArray === true}
+                      onChange={(e) => setField(m, 'imageFieldArray', e.target.checked)}
+                      style={{ cursor: 'pointer', margin: 0 }}
+                    />
+                    参考图按数组发送
+                  </label>
+                  <HelpHint>{FIELD_HELP.imageFieldArray}</HelpHint>
+                </div>
+                <div style={{ marginBottom: 0 }}>
+                  <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={c.sendNegative !== false}
+                      onChange={(e) => setField(m, 'sendNegative', e.target.checked)}
+                      style={{ cursor: 'pointer', margin: 0 }}
+                    />
+                    提交负向词 (negative_prompt)
+                  </label>
+                  <HelpHint>{FIELD_HELP.sendNegative}</HelpHint>
+                </div>
+              </>
             )}
             {/* size（视频尺寸，厂商特定，可选） */}
             {m === 'video' && (

@@ -95,8 +95,10 @@ export async function callChat({ baseUrl, apiKey, model, messages, temperature =
 }
 
 /** 图片生成：返回图片地址数组（url 或 data: 内联） */
-export async function callImage({ baseUrl, apiKey, model, prompt, size = '1024x1024', n = 1, extra = {}, signal } = {}) {
-  const url = resolveUrl(baseUrl, '/images/generations', '/images/generations');
+export async function callImage({ baseUrl, apiKey, model, prompt, size = '1024x1024', n = 1, extra = {}, endpoint, signal } = {}) {
+  // endpoint 允许覆盖默认路径：图生图模型常不在 /images/generations 上（如 /images/edits 或厂商自定义）。
+  // 留空则回落到默认 /images/generations。
+  const url = resolveUrl(baseUrl, endpoint, '/images/generations');
   const body = { model, prompt, size, n, ...extra };
   const res = await fetch(url, {
     method: 'POST',
