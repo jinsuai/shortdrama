@@ -45,7 +45,7 @@ const FIELD_HELP = {
   endpoint: '接口路径，可填相对路径（拼到 Base URL 后）或完整 URL。图片默认 /images/generations；图生图若模型要求别的路径（如 /images/edits 或厂商自定义路径），在此覆盖。',
   size: '视频分辨率，厂商特定。部分服务强制特定值（如 720P 必填）；其他按文档填，或留空用服务默认。',
   pollPath: '任务型 API 专用：先返回任务 id、再轮询拿结果（Kling / Runway / Sora 等）。填 /tasks/{id} 或完整轮询 URL；{id} 会自动替换成任务 id。直出型服务（返回即结果 URL）留空即可。',
-  videoMode: '请求里 mode 字段的取值。素材（首帧 / 尾帧 / 参考图 / 参考音频）一律按「有什么就提交什么」独立发送，不会因为选了某一类就被丢弃；此项只影响 mode 本身。留空则跟随调用方默认。',
+  videoMode: '生成模式（请求里 mode 字段的取值），决定使用哪类素材：纯文字(text) / 首尾帧(keyframe) / 参考图·音频(reference)。留空则根据本次提交自动推断——有首/尾帧→keyframe，有参考图/音频→reference，都没有→text。换模型只改这里，代码无需动。',
   engine: '厂商自定义的引擎标识字段。默认不发送；只有你的服务商明确要求时才填。',
   sendNegative: '图片请求是否带上 negative_prompt（负向词）。默认勾选，使用内置通用负向词（糊、畸形、水印等）。若你的服务对未知字段做严格校验、带负向词就报错，取消勾选即可，请求体里将不再出现该字段。',
   imageField: '图生图时「参考图」放在哪个字段名下。各厂商不同：常见 image_url / image / init_image / reference_image。留空默认 image_url。填错会导致参考图不被识别——请求会退化成纯文生图或被直接拒绝。',
@@ -270,6 +270,21 @@ export function ApiSettings() {
                   <option value="reference">参考图 / 参考音频</option>
                 </select>
                 <HelpHint>{FIELD_HELP.videoMode}</HelpHint>
+              </div>
+            )}
+            {/* 视频专有：提交负向词开关（与图片一致，默认开，但只发填写的负向词、不补内置词） */}
+            {m === 'video' && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={c.videoSendNegative !== false}
+                    onChange={(e) => setField(m, 'videoSendNegative', e.target.checked)}
+                    style={{ cursor: 'pointer', margin: 0 }}
+                  />
+                  提交负向词 (negative_prompt)
+                </label>
+                <HelpHint>{FIELD_HELP.videoSendNegative}</HelpHint>
               </div>
             )}
             {/* engine（厂商自定义字段，留空不发送） */}

@@ -130,26 +130,41 @@ export async function generateVideo({ prompt, seconds, duration, aspect_ratio, r
   payload.aspect_ratio = aspect_ratio ?? ratio ?? '16:9';
   if (size) payload.size = size;
   if (c.size) payload.size = c.size;                        // 尺寸随厂商配置，不写死
-  // 负向词：只有调用方真的填了才发（不自作主张补内置词，避免不支持该字段的服务直接 400）。
-  // 字段名允许配置，不认 negative_prompt 的厂商改配置即可。
-  const negText = String(negative || '').trim();
-  if (negText) payload[c.negativeField || 'negative_prompt'] = negText;
-  // 模式：设置里显式选的优先（调用方传的多半是代码写死的默认值，不代表用户意图）
-  const rawMode = c.videoMode || mode;
-  payload.mode = VIDEO_MODE_ALIAS[rawMode] || rawMode || 'text';   // 旧语义(i2v/s2v/t2v)统一翻译成通用语义
-
-  // 🔴 媒体素材「有什么就发什么」，三类互不顶替、互不裁剪：
-  //   first_frame / last_frame —— 只来自首/尾帧入参（旧别名 image 同属首帧语义，不代表参考图）
-  //   images                   —— 只来自参考图入参，不会因为没首帧就被拿去当首帧
-  //   audios                   —— 只来自参考音频入参
-  // 没有的字段直接不发（不补空值、不做兜底），数量的上限也交给厂商自行校验。
+  // 负向词开关（与图片一致：默认开，但只发送你填写的负向词，不自动补内置通用词——
+  // 避免不支持该字段的服务直接 400）。字段名可配置（negativeField）。
+  if (c.videoSendNegative !== false && c.videoSendNegative !== 'false') {
+    const negText = String(negative || '').trim();
+    if (negText) payload[c.negativeField || 'negative_prompt'] = negText;
+  }
+  // —— 素材收集（先算清有哪些素材，再按模式分桶，杜绝互斥字段误发）——
   const ff = first_frame ?? image;
-  if (ff) payload.first_frame = ff;
-  if (last_frame) payload.last_frame = last_frame;
+  const hasFirstLast = !!(ff || last_frame);
   const imgs = (Array.isArray(images) ? images : []).filter(Boolean);
-  if (imgs.length) payload.images = imgs;
   const aus = (Array.isArray(audios) ? audios : []).filter(Boolean);
-  if (aus.length) payload.audios = aus;
+  const hasRefMedia = imgs.length > 0 || aus.length > 0;
+
+  // —— 解析生成模式：显式优先，否则按素材自动推断 ——
+  // 行业通用三模式语义：text(纯文生) / keyframe(首尾帧) / reference(参考图·音频)。
+  // 显式值可为标准名或旧别名(i2v→keyframe / s2v→reference / t2v→text)；
+  // 未显式指定时按本次提交自动判定（有首/尾帧→keyframe，有参考图/音频→reference，都没有→text）。
+  const rawMode = c.videoMode || mode;
+  const explicit = VIDEO_MODE_ALIAS[rawMode] || (['text', 'keyframe', 'reference'].includes(rawMode) ? rawMode : '');
+  const stdMode = explicit || (hasFirstLast ? 'keyframe' : (hasRefMedia ? 'reference' : 'text'));
+  payload.mode = stdMode;
+
+    // —— 按标准三模式分桶发送对应素材，互斥字段绝不发 ——
+    // 视频生成的通用抽象（Kling / Runway / 通义 / Agnes 等主流服务均遵循），非为某家写死：
+    //   text      → 纯文生，不发明任何媒体字段；
+    //   keyframe  → 只发首/尾帧，不发明参考图/音频；
+    //   reference → 只发参考图/音频，不发明首/尾帧。
+    if (stdMode === 'keyframe') {
+      if (ff) payload.first_frame = ff;
+      if (last_frame) payload.last_frame = last_frame;
+    } else if (stdMode === 'reference') {
+      if (imgs.length) payload.images = imgs;
+      if (aus.length) payload.audios = aus;
+    }
+    // text 模式不发明任何媒体字段（上方未赋值，天然满足）
   if (n) payload.n = n;
   // engine 属于厂商自定义字段：默认不发送（调用方传的 'h3' 是商业版渠道遗留，
   // 对直连用户自有模型的开源版没有意义）；若所用服务确实需要，在设置里填「附加字段 engine」。

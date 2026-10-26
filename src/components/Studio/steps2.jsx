@@ -650,7 +650,7 @@ export function MotionStep({ project, update, log }) {
     const audio = await resolveAudio(idx);
 
     const { resultUrl } = await generatePanelVideo({
-      engine, mode: 'i2v', prompt: finalPrompt, negative,
+      engine, mode: m.videoMode || '', prompt: finalPrompt, negative,
       images: refUrls, firstFrame: first, lastFrame: last,
       duration, ratio, audio,
     });
@@ -1223,6 +1223,14 @@ export function MotionContext({ project, update }) {
   // 视频任务队列（submit 写入 project.motion.jobs），队列页据此渲染真实进度
   const jobs = Array.isArray(saved.jobs) ? saved.jobs : [];
   const [jobFilter, setJobFilter] = useState('all');
+  // 进行中（排队 + 生成中）数量：标签上直接显示角标，并在有新任务时自动切到队列页，
+  // 避免用户点了「加入生成队列」却待在「运动参数」页看不出任何变化。
+  const pending = jobs.filter((j) => j.status === 'running' || j.status === 'queued').length;
+  const prevPending = useRef(0);
+  useEffect(() => {
+    if (pending > 0 && prevPending.current === 0) setTab('queue');
+    prevPending.current = pending;
+  }, [pending]);
   const engine = saved.engine || defaultModelKey('video');
   const ratio = saved.ratio || defaultRatio('video');
   const dur = saved.duration || 5;
@@ -1253,6 +1261,14 @@ export function MotionContext({ project, update }) {
                 color: active ? '#1f2937' : '#4b5563', fontWeight: active ? 600 : 400,
               }}>
               <Icon name={ic} size={13} />{label}
+              {k === 'queue' && pending > 0 && (
+                <span style={{
+                  minWidth: 15, height: 15, padding: '0 4px', borderRadius: 999,
+                  background: '#6366f1', color: '#fff', fontSize: 9.5, fontWeight: 700,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  lineHeight: 1,
+                }}>{pending}</span>
+              )}
             </button>
           );
         })}
