@@ -686,11 +686,31 @@ export function MotionStep({ project, update, log }) {
       };
     });
     log?.(`第 ${idx + 1} 个分镜视频已生成（${videoModelLabel()} · ${duration}s）`);
+    return playUrl;
   };
+
+  /**
+   * 维护「生成队列」：每镜一条任务写进 project.motion.jobs，右侧「队列」页据此实时渲染。
+   * 🔴 之前这里完全没有任务数据 —— 队列页是一句写死的「暂无任务」，
+   *    用户点「加入生成队列」后看不到任何反馈，表现就是"提交了没反应"。
+   * 用函数式 update 读最新 project，避免闭包拿到旧快照。
+   */
+  const patchJobs = (fn) => update?.((p) => {
+    const cur = p?.motion || {};
+    const curJobs = Array.isArray(cur.jobs) ? cur.jobs : [];
+    // 只保留最近 30 条，避免 project 存档无限膨胀
+    return { ...p, motion: { ...cur, jobs: fn(curJobs).slice(-30) } };
+  });
 
   const submit = async () => {
     if (busy) return;
-    if (!shots.length) { log?.(T.motion.noShotYet); return; }
+    if (!shots.length) {
+      // 没有任何分镜时，原来只往底部日志写一行，界面看起来像"点了没反应"——
+      // 现在同步显示在按钮上方的进度条位置，确保用户一定能看到为什么没开始。
+      setProgress('还没有分镜：请先到「分镜」步骤生成分镜，再回来生成视频');
+      log?.(T.motion.noShotYet);
+      return;
+    }
     // 没勾目标分镜 → 默认只生成第 1 镜（明确告诉用户，避免"点了没反应/生成错镜"的困惑）
     let list = targets.slice().sort((x, y) => x - y).filter((i) => i >= 0 && i < shots.length);
     if (!list.length) {
@@ -698,15 +718,39 @@ export function MotionStep({ project, update, log }) {
       list = [0];
     }
 
+    // ① 先把任务登记进队列（queued）—— 点完立刻能在右侧「队列」看到，不再是死按钮
+    const stamp = Date.now();
+    const jobIds = list.map((_, k) => `vjob-${stamp}-${k}`);
+    patchJobs((jobs) => [
+      ...jobs,
+      ...list.map((si, k) => ({
+        id: jobIds[k], shotIndex: si, status: 'queued', progress: '排队中',
+        url: '', error: '', at: stamp,
+      })),
+    ]);
+
     setBusy(true);
     let ok = 0;
     try {
       for (let k = 0; k < list.length; k++) {
+        const jobId = jobIds[k];
+        // ② 开跑：状态 running（队列页显示"第 N 镜 · 生成中 k/总数"）
+        patchJobs((jobs) => jobs.map((j) => (j.id === jobId
+          ? { ...j, status: 'running', progress: `生成中 ${k + 1}/${list.length}`, startedAt: Date.now() }
+          : j)));
         try {
-          await genOne(list[k], k, list.length);
+          const url = await genOne(list[k], k, list.length);
           ok += 1;
+          patchJobs((jobs) => jobs.map((j) => (j.id === jobId
+            ? { ...j, status: 'done', progress: '已完成', url: url || '', endedAt: Date.now() }
+            : j)));
         } catch (e) {
-          log?.(`第 ${list[k] + 1} 镜失败：${e?.message || e}`);
+          const msg = e?.message || String(e);
+          log?.(`第 ${list[k] + 1} 镜失败：${msg}`);
+          // ③ 失败也留在队列里，把原因写清楚，便于用户对照设置排查
+          patchJobs((jobs) => jobs.map((j) => (j.id === jobId
+            ? { ...j, status: 'error', progress: '失败', error: msg, endedAt: Date.now() }
+            : j)));
         }
       }
       log?.(T.motion.batchDone(ok));
@@ -1176,6 +1220,9 @@ export function MotionContext({ project, update }) {
   const [tab, setTab] = useState('params');
   // 参数落在 project.motion 上，与正文「加入生成队列」共享
   const saved = project?.motion || {};
+  // 视频任务队列（submit 写入 project.motion.jobs），队列页据此渲染真实进度
+  const jobs = Array.isArray(saved.jobs) ? saved.jobs : [];
+  const [jobFilter, setJobFilter] = useState('all');
   const engine = saved.engine || defaultModelKey('video');
   const ratio = saved.ratio || defaultRatio('video');
   const dur = saved.duration || 5;
@@ -1276,15 +1323,65 @@ export function MotionContext({ project, update }) {
           </CtxBlock>
         </>
       ) : (
-        <CtxBlock title={`${T.motion.queueTitle} · ${T.motion.gpuIdle}`}>
+        <CtxBlock title={`${T.motion.queueTitle} · ${
+          jobs.length
+            ? `${jobs.filter((j) => j.status === 'running' || j.status === 'queued').length} 进行中 / ${jobs.length} 总计`
+            : T.motion.gpuIdle
+        }`}>
           <Seg options={[
             { key: 'all', label: T.motion.filterAll },
             { key: 'run', label: T.motion.filterRunning },
             { key: 'done', label: T.motion.filterDone },
-          ]} value="all" onChange={() => {}} />
-          <div style={{ marginTop: 12, fontSize: 11.5, color: '#7c8798', textAlign: 'center', padding: '20px 0' }}>
-            暂无任务
-          </div>
+          ]} value={jobFilter} onChange={setJobFilter} />
+          {(() => {
+            const shown = jobs.filter((j) => (
+              jobFilter === 'all' ? true
+                : jobFilter === 'run' ? (j.status === 'running' || j.status === 'queued')
+                  : (j.status === 'done' || j.status === 'error')
+            ));
+            const list = shown.slice().reverse();   // 最新的在上
+            if (!list.length) {
+              return (
+                <div style={{ marginTop: 12, fontSize: 11.5, color: '#7c8798', textAlign: 'center', padding: '20px 0' }}>
+                  暂无任务
+                </div>
+              );
+            }
+            return (
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {list.map((j) => {
+                  const tone = j.status === 'done' ? '#16a34a'
+                    : j.status === 'error' ? '#dc2626'
+                      : j.status === 'running' ? '#6d28d9' : '#94a3b8';
+                  return (
+                    <div key={j.id} style={{
+                      padding: '7px 9px', borderRadius: 7,
+                      background: 'rgba(15,23,42,0.044)', border: '1px solid rgba(15,23,42,0.11)',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: tone, flexShrink: 0 }} />
+                        <span style={{ fontSize: 11.5, color: '#374151', fontWeight: 600 }}>
+                          第 {(Number.isFinite(j.shotIndex) ? j.shotIndex : 0) + 1} 镜
+                        </span>
+                        <span style={{ fontSize: 10.5, color: tone, marginLeft: 'auto' }}>
+                          {j.progress || j.status}
+                        </span>
+                      </div>
+                      {j.error && (
+                        <div style={{ fontSize: 10, color: '#dc2626', marginTop: 4, lineHeight: 1.5, wordBreak: 'break-all' }}>
+                          {j.error}
+                        </div>
+                      )}
+                      {j.url && (
+                        <video src={j.url} muted playsInline
+                          style={{ width: '100%', height: 64, objectFit: 'cover', borderRadius: 5, marginTop: 6, background: '#000' }} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </CtxBlock>
       )}
     </>
