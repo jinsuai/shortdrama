@@ -12,6 +12,8 @@ import {
 import { NEG_BASE } from '../../lib/asset-anatomy.js';
 import { img2imgImage } from '../../dispatch-jobs.js';
 import { generatePanelImage } from '../../lib/image-workflows.js';
+// TEXT_MODEL_LABEL 用它读「设置里配的文本模型名」，界面文案必须与实际调用模型一致
+import { getModelConfig } from '../../lib/providers/settings.js';
 
 const P = { padding: '18px 22px' };
 

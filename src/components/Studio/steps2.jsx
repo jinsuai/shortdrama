@@ -10,6 +10,7 @@ import { DispatchGlmClient } from '@dual/glm-client';
 import { analyzeStoryboard, generateKeyframeShot, DEFAULT_SHOT_COUNT } from '../../lib/storyboard.js';
 import { videoPolishSystemPrompt, refineVideoPromptU00 } from '../../lib/prompts.js';
 import { GridSplitModal } from './modals';
+import { characterFourView } from '../../utils.js';
 
 const P = { padding: '18px 22px' };
 

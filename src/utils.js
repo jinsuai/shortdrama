@@ -1,5 +1,9 @@
 // shortdrama 通用工具：分场解析、脚本拼接、下载、项目默认值。
 
+// 桌面端能力在 Web 端由垫片降级；本文件下载/打开链接依赖这两个符号，
+// 缺 import 时会在「下载」路径上抛 ReferenceError（打包不会报错，只有运行时暴露）。
+import { invoke, openUrl } from './lib/tauri-shim.js';
+
 /**
  * 读取文本文件，自动检测 UTF-8 / GBK 编码，解决 Windows 下 txt 乱码问题。
  * @param {File} file - 文件对象

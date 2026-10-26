@@ -7,6 +7,7 @@ import { getAppSetting, saveAppSetting } from "../../utils/app-settings.js";
 import { calcVideoPrice, getPrice } from "../../utils/pricing-utils.js";
 import { getStylePrompt } from "../../utils.js";
 import { extractAppearance } from "./CharacterManager.jsx";
+import { defaultVideoEngine, videoWf } from "../Studio/i18n.js";
 
 const VIDEO_MODES = [
   { key: "i2v", label: "图生视频 (I2V)", desc: "角色参考图驱动，人物外貌一致，模型自由发挥画面" },

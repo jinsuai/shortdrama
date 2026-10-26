@@ -2,7 +2,7 @@
 // Web 端降级走 ffmpeg.wasm（需联网加载内核）。两个分支都返回合并后 MP4 的 base64 字符串，
 // 调用方统一用 b64ToBlob 转成 Blob 做预览或落盘，避免“两条 ffmpeg 路径”行为不一致。
 
-import { invoke } from "./tauri-shim.js";
+import { invoke, convertFileSrc } from "./tauri-shim.js";
 import { isTauri, blobToBase64 } from "@dual/ui";
 import { concatVideos } from "./ffmpeg.js";
 

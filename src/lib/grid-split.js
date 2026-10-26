@@ -14,6 +14,9 @@
  * 拆分顺序：从左到右、从上到下（Z 序），与阅读顺序一致。
  */
 
+// 兜底路径（Tauri download_url）要用 invoke；Web 端垫片返回 null 后由调用方降级。
+import { invoke } from './tauri-shim.js';
+
 /** 取远端/本地图片为可被 canvas 安全读取的位图 */
 async function loadBitmap(src) {
   // ① File/Blob 直接读（用户本地选择的文件）
