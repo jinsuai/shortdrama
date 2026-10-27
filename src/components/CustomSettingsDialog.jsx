@@ -253,7 +253,7 @@ export function CustomSettingsDialog({ open, onClose, theme, onThemeChange, appN
                 margin: "0 auto",
                 textAlign: "left",
               }}>
-                <div style={{ fontSize: 12, color: "var(--text-muted, #888)" }}>品牌：烬序 JINSU</div>
+                <div style={{ fontSize: 12, color: "var(--text-muted, #888)" }}>品牌：美嘉拓旗下 · 烬序 JINSU</div>
                 <div style={{ fontSize: 12, color: "var(--text-muted, #888)" }}>官网：jinsuai.cn</div>
                 <div style={{ fontSize: 12, color: "var(--text-muted, #888)" }}>技术栈：React + Vite</div>
                 <div style={{ fontSize: 12, color: "var(--text-muted, #888)" }}>更新日期：2026-08-24</div>
