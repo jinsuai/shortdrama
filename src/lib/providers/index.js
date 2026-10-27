@@ -8,11 +8,16 @@
 //   generateMusic → { resultUrl }
 //   generateText  → 字符串
 
-import { getModelConfig, isModalityConfigured } from './settings.js';
+import { getModelConfig, isModalityConfigured, getResolvedConfig, writeAdapt } from './settings.js';
 import { callChat, callImage, callMedia, callTTS } from './openai.js';
+import { runWorkflow, materializeUrl } from './workflow.js';
 
-export { getModelConfig, saveModelConfig, getAllModelConfig, saveAllModelConfig, isModalityConfigured, MODALITIES, PROVIDER_PRESETS } from './settings.js';
+export { getModelConfig, saveModelConfig, getAllModelConfig, saveAllModelConfig, isModalityConfigured, MODALITIES, PROVIDER_PRESETS, getResolvedConfig, detectProvider } from './settings.js';
 export { callChat, callImage, callMedia, callTTS, deepFindUrl } from './openai.js';
+export {
+  listWorkflows, fetchWorkflowRules, getWorkflowRules, runWorkflow,
+  describeRules, mapInputs, materializeUrl, DEFAULT_WORKFLOW_PATHS,
+} from './workflow.js';
 
 export class ModelError extends Error {
   constructor(message) {
@@ -22,16 +27,44 @@ export class ModelError extends Error {
 }
 
 function requireConfig(modality) {
-  const c = getModelConfig(modality);
+  // 用「最终生效配置」而不是原始存档：自动推断的鉴权方式 / 接口路径 / 轮询路径都在这里。
+  const c = getResolvedConfig(modality);
   if (!c.apiKey || !c.apiKey.trim()) {
     throw new ModelError(
       `未配置「${modality}」模型的 API Key。请在「设置 → 模型配置」中填写对应服务的 baseUrl / API Key / 模型名。`
     );
   }
-  if (!c.model || !c.model.trim()) {
+  // 模型名只在确实要发送 model 字段时才强制：工作流型服务（AutoDL 等）不需要 model。
+  if (c.sendModel !== false && (!c.model || !c.model.trim())) {
     throw new ModelError(`「${modality}」模型名未填写，请在「设置 → 模型配置」中指定 model。`);
   }
+  // 工作流型：光有 Key 不够，还得选一条工作流 —— 否则字段无从映射。
+  // 这里提前报，比发出去被平台 400 再回来看日志好定位得多。
+  if (c.kind === 'workflow' && !(c.workflowId || '').trim()) {
+    throw new ModelError(
+      `「${modality}」是工作流型服务，还没选工作流。请在「设置 → 模型配置」里点「选择工作流」挑一条再生成。`
+    );
+  }
   return c;
+}
+
+/**
+ * 工作流型服务的统一出口：把标准素材交给 workflow.js 按 input_rules 映射后提交。
+ * 与 OpenAI 兼容链路并列，互不影响 —— 只有 kind==='workflow' 才走这里。
+ */
+async function generateViaWorkflow(modality, c, std, { onProgress, signal, timeoutMs } = {}) {
+  const out = await runWorkflow({
+    cfg: c,
+    modality,
+    std,
+    extra: c.workflowExtra || {},
+    onProgress,
+    signal,
+    timeoutMs: timeoutMs || 600000,
+  });
+  const url = c.persistMedia === false ? out.resultUrl : await materializeUrl(out.resultUrl);
+  if (modality === 'image') return { resultUrl: url, allUrls: [url], raw: out.raw };
+  return { resultUrl: url, raw: out.raw };
 }
 
 /** 文本生成（兼容旧 DispatchGlmClient.chat 的 messages 入参） */
@@ -45,6 +78,8 @@ export async function generateText(messages, opts = {}) {
     temperature: opts.temperature ?? 0.7,
     maxTokens: opts.maxTokens ?? 1200,
     signal: opts.signal,
+    authScheme: c.authScheme,
+    sendModel: c.sendModel !== false,
   });
 }
 
@@ -70,38 +105,95 @@ export const DEFAULT_IMAGE_NEGATIVE = 'low quality, worst quality, blurry, lowre
  *
  * 需要换接口路径时只改「设置 → 图片模型 → 接口路径」，其余无需代码改动。
  */
+/** 参考图字段名的常见取值：用户没指定时按顺序自动试，试通了就记住 */
+const REF_FIELD_CANDIDATES = ['image_url', 'image', 'init_image', 'reference_image', 'images'];
+
+/** 判断错误信息是不是「这个字段服务不认」——只有这类错误才值得换字段名重试 */
+function isFieldRejected(msg, field) {
+  const t = String(msg || '');
+  if (field && t.includes(field)) return true;
+  return /未知|不支持|禁止字段|不允许|多余|unknown|unrecognized|unexpected|not supported|extra/i.test(t);
+}
+
 export async function generateImage(prompt, opts = {}) {
   const c = requireConfig('image');
-  const extra = {};
-  // 参考图（图生图）：字段名不写死 —— 各厂商不同（image_url / image / init_image / reference_image…），
-  // 由「设置 → 图片模型 → 参考图字段名」配置，留空默认 image_url（最常见的 OpenAI 兼容写法）。
-  // 值格式同样配置化：默认「单图发字符串、多图发数组」；部分服务（如声明 string[] 的 image 字段）
-  // 可勾选「参考图按数组发送」，强制单图也用 [url]。
-  const refField = (c.imageField || '').trim() || 'image_url';
+  // 参考图（图生图）：字段名各厂商不同（image_url / image / init_image / reference_image…）。
+  // 用户可以在「高级」里指定；没指定就按常见顺序自动试，试通即写入自愈记忆，下次直接用。
+  // 值格式：默认「单图发字符串、多图发数组」；服务声明为数组时自动切成数组（见自愈分支）。
   const asArray = c.imageFieldArray === true || c.imageFieldArray === 'true';
   const refs = (Array.isArray(opts.referenceImages) ? opts.referenceImages : [])
     .filter(Boolean).slice(0, 3);
   const single = opts.referenceImage || refs[0] || '';
   const refList = refs.length ? refs : (single ? [single] : []);
-  if (refList.length) extra[refField] = (asArray || refList.length > 1) ? refList : refList[0];
-  // 负向词：字段名固定 negative_prompt，内容默认取内置通用负向词（调用方传了以调用方为准）。
-  // 仅当设置里开启「提交负向词」时才发送 —— 默认开启，未配置该开关的老配置同样开启。
-  if (c.sendNegative !== false && c.sendNegative !== 'false') {
-    extra.negative_prompt = (opts.negative || '').trim() || DEFAULT_IMAGE_NEGATIVE;
+  // 工作流型服务：字段由工作流的 input_rules 决定，不走 OpenAI 那套固定字段名。
+  if (c.kind === 'workflow') {
+    // 图片链路只给「像素尺寸」（如 864x1536），不给画幅比例；工作流的分辨率字段却是枚举文本
+    // （480p竖/768p横…），所以这里从宽高反推方向，否则竖屏项目会被判成横屏。
+    const sizeStr = String(opts.size || '');
+    const wh = /^(\d+)\s*[x×*]\s*(\d+)$/i.exec(sizeStr);
+    let ratio = opts.ratio || '';
+    if (!ratio && wh) {
+      const w = Number(wh[1]); const h = Number(wh[2]);
+      ratio = h > w ? '9:16' : (w > h ? '16:9' : '1:1');
+    }
+    return generateViaWorkflow('image', c, {
+      prompt, negative: opts.negative, images: refList, ratio,
+    }, { onProgress: opts.onProgress, signal: opts.signal, timeoutMs: opts.timeoutMs });
   }
-  const urls = await callImage({
-    baseUrl: c.baseUrl,
-    apiKey: c.apiKey,
-    model: c.model,
-    endpoint: c.endpoint,   // 图片接口路径可配（如 /images/edits 或厂商自定义），留空走默认
-    prompt,
-    size: opts.size || '1024x1024',
-    n: opts.n || 1,
-    extra,
-    signal: opts.signal,
-  });
-  if (!urls.length) throw new ModelError('图片模型未返回任何图片');
-  return { resultUrl: urls[0], allUrls: urls, raw: { data: urls.map((u) => ({ url: u })) } };
+  const prefField = (c.imageField || '').trim();
+  const fieldOrder = [...new Set([prefField, ...REF_FIELD_CANDIDATES].filter(Boolean))];
+
+  let lastErr = null;
+  for (let i = 0; i < fieldOrder.length; i++) {
+    const field = fieldOrder[i];
+    let useArray = asArray;
+    // 同一字段名最多试两次：第二次是「去掉负向词」或「改成数组」的自愈尝试
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const extra = {};
+      if (refList.length) extra[field] = (useArray || refList.length > 1) ? refList : refList[0];
+      // 负向词：默认发；服务不认时会被下面自愈关掉并记住。
+      const wantNeg = c.sendNegative !== false && c.sendNegative !== 'false';
+      if (wantNeg) extra.negative_prompt = (opts.negative || '').trim() || DEFAULT_IMAGE_NEGATIVE;
+      try {
+        const urls = await callImage({
+          baseUrl: c.baseUrl,
+          apiKey: c.apiKey,
+          model: c.model,
+          endpoint: c.endpoint,   // 图片接口路径可配（如 /images/edits 或厂商自定义），留空走默认
+          prompt,
+          size: opts.size || '1024x1024',
+          n: opts.n || 1,
+          extra,
+          signal: opts.signal,
+          authScheme: c.authScheme,
+          sendModel: c.sendModel !== false,
+        });
+        if (!urls.length) throw new ModelError('图片模型未返回任何图片');
+        // 成功了：把这次验证可用的写法记下来，下次不用再试
+        if (refList.length && field !== prefField) writeAdapt('image', { imageField: field });
+        if (useArray !== asArray) writeAdapt('image', { imageFieldArray: useArray });
+        return { resultUrl: urls[0], allUrls: urls, raw: { data: urls.map((u) => ({ url: u })) } };
+      } catch (e) {
+        lastErr = e;
+        const msg = e?.message || String(e);
+        // 自愈①：负向词被拒 → 关掉负向词再试一次（并记住）
+        if (wantNeg && /negative|负向/i.test(msg)) {
+          writeAdapt('image', { sendNegative: false });
+          c.sendNegative = false;
+          continue;
+        }
+        // 自愈②：单图被当成类型错误 → 改成数组再试
+        if (refList.length && !useArray && /数组|array|list|类型|type/i.test(msg)) {
+          useArray = true;
+          continue;
+        }
+        // 自愈③：这个字段名服务不认 → 换下一个候选（仅在带参考图时才有意义）
+        if (refList.length && isFieldRejected(msg, field) && i < fieldOrder.length - 1) break;
+        throw e;   // 鉴权 / 额度 / 限流 之类错误不重试，直接抛给用户看
+      }
+    }
+  }
+  throw lastErr || new ModelError('图片生成失败');
 }
 
 /**
@@ -143,6 +235,16 @@ export async function generateVideo({ prompt, seconds, duration, aspect_ratio, r
   const aus = (Array.isArray(audios) ? audios : []).filter(Boolean);
   const hasRefMedia = imgs.length > 0 || aus.length > 0;
 
+  // 工作流型服务：由工作流的 input_rules 决定发哪些字段（参考图槽位/首尾帧/时长/分辨率各不相同），
+  // 不套 OpenAI 那套固定字段名。放在这里（素材收集之后）是因为映射需要全部素材齐了才好分桶。
+  if (c.kind === 'workflow') {
+    return generateViaWorkflow('video', c, {
+      prompt, negative, images: imgs, audios: aus,
+      first_frame: ff, last_frame,
+      seconds: sec, ratio: aspect_ratio ?? ratio,
+    }, { onProgress, signal, timeoutMs });
+  }
+
   // —— 解析生成模式：显式优先，否则按素材自动推断 ——
   // 行业通用三模式语义：text(纯文生) / keyframe(首尾帧) / reference(参考图·音频)。
   // 显式值可为标准名或旧别名(i2v→keyframe / s2v→reference / t2v→text)；
@@ -179,14 +281,22 @@ export async function generateVideo({ prompt, seconds, duration, aspect_ratio, r
     timeoutMs: timeoutMs || 600000,
     onProgress,
     signal,
+    authScheme: c.authScheme,
+    sendModel: c.sendModel !== false,
   });
   if (!out.resultUrl) throw new ModelError('视频模型未返回视频地址');
   return { resultUrl: out.resultUrl, raw: out.raw };
 }
 
 /** 配音。input 为台词文本 */
-export async function generateTTS({ text, voice = 'default', language, signal } = {}) {
+export async function generateTTS({ text, voice = 'default', language, signal, onProgress, timeoutMs } = {}) {
   const c = requireConfig('tts');
+  // 工作流型 TTS（如 AutoDL 的 indextts2）：把台词文本映射到工作流的提示词字段。
+  // 这类工作流通常还要求一段「参考音色音频」—— 没有的话 workflow.js 会明确报缺什么，
+  // 而不是发一个必然失败的请求。
+  if (c.kind === 'workflow') {
+    return generateViaWorkflow('tts', c, { text, voice, language }, { onProgress, signal, timeoutMs });
+  }
   const extra = {};
   if (language) extra.language = language;
   const url = await callTTS({
@@ -197,6 +307,8 @@ export async function generateTTS({ text, voice = 'default', language, signal } 
     voice,
     extra,
     signal,
+    authScheme: c.authScheme,
+    sendModel: c.sendModel !== false,
   });
   return { resultUrl: url };
 }
@@ -220,6 +332,8 @@ export async function generateMusic({ tags, lyrics, seconds, bpm, language, onPr
     timeoutMs: 600000,
     onProgress,
     signal,
+    authScheme: c.authScheme,
+    sendModel: c.sendModel !== false,
   });
   if (!out.resultUrl) throw new ModelError('音乐模型未返回音频地址');
   return { resultUrl: out.resultUrl, raw: out.raw };

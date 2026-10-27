@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Icon, Btn, Pill } from './ui';
 import {
-  MODALITIES, PROVIDER_PRESETS, getAllModelConfig, saveAllModelConfig,
+  MODALITIES, PROVIDER_PRESETS, getAllModelConfig, saveAllModelConfig, detectProvider,
+  listWorkflows, getWorkflowRules, describeRules, DEFAULT_WORKFLOW_PATHS,
 } from '../../lib/providers/index.js';
 
 /**
@@ -41,16 +42,151 @@ const FIELD_HELP = {
   preset: '选厂商可一键填入地址；选「自定义」则手动填 Base URL。预设只填地址，Key / 模型名仍需自己填。',
   baseUrl: '模型服务的根地址，填到「/v1」或域名根即可。末尾斜杠会自动处理，无需手填。',
   apiKey: '服务商提供的密钥，仅保存在本机浏览器，不会上传到任何服务器。',
-  model: '必填。该模态实际调用的模型 ID，如 gpt-4o-mini / deepseek-chat / qwen-max。只填 Key 不填模型名会被下游拒绝。',
-  endpoint: '接口路径，可填相对路径（拼到 Base URL 后）或完整 URL。图片默认 /images/generations；图生图若模型要求别的路径（如 /images/edits 或厂商自定义路径），在此覆盖。',
+  model: '该模态实际调用的模型 ID，如 gpt-4o-mini / deepseek-chat / qwen-max。多数服务必填；工作流型服务（AutoDL 等）不需要，留空即可。',
+  authScheme: '鉴权头发法。绝大多数服务用 Bearer；AutoDL 的 ComfyUI 工作流 API 要求原样发送 Token。选错会 401。通常自动识别，不用改。',
+  endpoint: '接口路径，可填相对路径（拼到 Base URL 后）或完整 URL。留空时按模态自动取标准路径（图片 /images/generations、视频 /video/generations…），并按已识别的厂商自动调整。只有特殊服务才需要改。',
   size: '视频分辨率，厂商特定。部分服务强制特定值（如 720P 必填）；其他按文档填，或留空用服务默认。',
   pollPath: '任务型 API 专用：先返回任务 id、再轮询拿结果（Kling / Runway / Sora 等）。填 /tasks/{id} 或完整轮询 URL；{id} 会自动替换成任务 id。直出型服务（返回即结果 URL）留空即可。',
   videoMode: '生成模式（请求里 mode 字段的取值），决定使用哪类素材：纯文字(text) / 首尾帧(keyframe) / 参考图·音频(reference)。留空则根据本次提交自动推断——有首/尾帧→keyframe，有参考图/音频→reference，都没有→text。换模型只改这里，代码无需动。',
   engine: '厂商自定义的引擎标识字段。默认不发送；只有你的服务商明确要求时才填。',
   sendNegative: '图片请求是否带上 negative_prompt（负向词）。默认勾选，使用内置通用负向词（糊、畸形、水印等）。若你的服务对未知字段做严格校验、带负向词就报错，取消勾选即可，请求体里将不再出现该字段。',
-  imageField: '图生图时「参考图」放在哪个字段名下。各厂商不同：常见 image_url / image / init_image / reference_image。留空默认 image_url。填错会导致参考图不被识别——请求会退化成纯文生图或被直接拒绝。',
-  imageFieldArray: '参考图的值格式。默认关闭：单图发字符串、多图发数组。若服务把该字段声明为数组（如有些服务的 image 是 string[]），勾选后即使只有一张图也发 [url]。',
+  imageField: '图生图时「参考图」放在哪个字段名下。留空即可：软件会按 image_url → image → init_image → … 自动试，试通后记住，下次直接用。只有确认自己的服务用别的名字时才填。',
+  imageFieldArray: '强制把参考图按数组发送。默认关闭（单图发字符串、多图发数组）；若服务报类型错误，软件会自动切成数组并记住，一般不用手动勾。',
+  workflowExtra: '自动映射认不出来的字段（如随机种子 seed、情感权重 emo_*）在这里手填，JSON 格式。填了就以这里为准，会覆盖自动推断出来的同名参数。',
+  wfPaths: '四项分别是「拉取列表 / 读取参数 / 提交任务 / 查询结果」的接口路径，{id} 代表工作流 id、{task} 代表任务 id。默认已按 AutoDL 实测路径填好，接别的平台（RunningHub、自建 ComfyUI-on-API）时按它的文档改这里即可。',
+  kind: '接入类型默认按 Base URL 自动识别：填 AutoDL 的地址会自动切到「工作流型」。若你用的是同类但没被认出来的平台，在这里手动选「工作流型」即可。',
 };
+
+/**
+ * 「已自动识别」提示条：把软件替用户推断出来的东西明说出来（可见即可改）。
+ * 之所以要有这一行：全自动化最容易让人不信任——不知道它到底用了什么。
+ */
+function AutoDetected({ m, c }) {
+  const p = detectProvider(c.baseUrl, c.model);
+  if (!p) return null;
+  const bits = [];
+  if (p.endpoints?.[m]) bits.push(`接口 ${p.endpoints[m]}`);
+  if (p.poll?.[m]) bits.push('任务完成后自动取结果');
+  if (p.authScheme === 'raw') bits.push('原样 Token 鉴权');
+  if (p.kind === 'workflow') bits.push('工作流型服务');
+  return (
+    <div style={{
+      marginBottom: 10, padding: '7px 9px', borderRadius: 7,
+      background: 'rgba(8,145,178,.08)', border: '1px solid rgba(8,145,178,.26)',
+      fontSize: 10.5, color: '#0e7490', lineHeight: 1.55,
+    }}>
+      已识别为 <b>{p.name}</b>{bits.length ? ` · ${bits.join(' · ')}` : ''}。这些都不用你填，填错可在下方「高级」里改。
+    </div>
+  );
+}
+
+/**
+ * 工作流选择器：工作流型服务（AutoDL 等）下，用户只需要「点选一条工作流」，
+ * 不需要看懂字段名叫 ref_image_0 还是 prompt_text —— 那是 input_rules 的事。
+ * 选完立刻把「这条工作流需要什么」用中文列出来，让用户在生成前就知道缺什么素材。
+ */
+function WorkflowPicker({ m, c, prov, onPick }) {
+  const [list, setList] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [summary, setSummary] = useState(null);
+
+  // 用表单里「当前填的」（可能还没保存）的值去请求，避免用户必须先保存才能选。
+  const liveCfg = () => ({
+    baseUrl: c.baseUrl,
+    apiKey: c.apiKey,
+    authScheme: c.authScheme || prov?.authScheme || 'raw',
+    workflowPaths: {
+      ...DEFAULT_WORKFLOW_PATHS,
+      ...(prov?.workflow || {}),
+      ...(c.wfPathList ? { list: c.wfPathList } : {}),
+      ...(c.wfPathDetail ? { detail: c.wfPathDetail } : {}),
+      ...(c.wfPathSubmit ? { submit: c.wfPathSubmit } : {}),
+      ...(c.wfPathResult ? { result: c.wfPathResult } : {}),
+    },
+  });
+
+  const load = async () => {
+    setBusy(true); setErr('');
+    try {
+      const rows = await listWorkflows(liveCfg());
+      setList(rows);
+      if (!rows.length) setErr('没有拉到任何工作流，请确认 Base URL 与 API Key。');
+    } catch (e) {
+      setErr(e?.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pick = async (id) => {
+    onPick(m, 'workflowId', id);
+    setSummary(null);
+    if (!id) return;
+    try {
+      const meta = await getWorkflowRules(liveCfg(), id);
+      const name = list.find((w) => w.id === id)?.name || meta.name;
+      onPick(m, 'workflowName', name);
+      setSummary({ name, ...describeRules(meta.rules) });
+    } catch (e) {
+      setErr(e?.message || String(e));
+    }
+  };
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <label style={labelStyle}>工作流（点「拉取列表」后选择）</label>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <select
+          value={c.workflowId || ''}
+          onChange={(e) => pick(e.target.value)}
+          style={{ ...inputStyle, flex: 1, cursor: 'pointer' }}
+        >
+          <option value="">{list.length ? '请选择一条工作流…' : '尚未拉取列表'}</option>
+          {list.map((w) => (
+            <option key={w.id} value={w.id}>{w.name}</option>
+          ))}
+        </select>
+        <button
+          type="button" onClick={load} disabled={busy}
+          style={{
+            flexShrink: 0, padding: '8px 12px', borderRadius: 7, cursor: busy ? 'default' : 'pointer',
+            border: '1px solid rgba(109,40,217,.34)', background: 'rgba(109,40,217,.09)',
+            color: '#6d28d9', fontSize: 12, fontFamily: 'inherit', whiteSpace: 'nowrap',
+          }}
+        >
+          {busy ? '拉取中…' : '拉取列表'}
+        </button>
+      </div>
+      <HelpHint>选一条工作流即可，字段名会自动读取，不用手填。换工作流只在这里改。</HelpHint>
+
+      {err && (
+        <div style={{
+          marginTop: 8, padding: '7px 9px', borderRadius: 7, fontSize: 10.5, lineHeight: 1.55,
+          background: 'rgba(220,38,38,.08)', border: '1px solid rgba(220,38,38,.28)', color: '#b91c1c',
+        }}>{err}</div>
+      )}
+
+      {summary && (
+        <div style={{
+          marginTop: 8, padding: '8px 10px', borderRadius: 7, fontSize: 10.5, lineHeight: 1.6,
+          background: 'rgba(8,145,178,.07)', border: '1px solid rgba(8,145,178,.24)', color: '#0e7490',
+        }}>
+          <div style={{ marginBottom: 4 }}>已选：<b>{summary.name}</b></div>
+          <div>需要：{summary.summary.map((s, i) => (
+            <span key={i} style={{
+              display: 'inline-block', margin: '2px 4px 2px 0', padding: '1px 6px', borderRadius: 5,
+              background: s.required ? 'rgba(220,38,38,.12)' : 'rgba(15,23,42,.07)',
+              border: `1px solid ${s.required ? 'rgba(220,38,38,.3)' : 'rgba(15,23,42,.12)'}`,
+              color: s.required ? '#b91c1c' : '#5b6678',
+            }}>{s.label}{s.count > 1 ? `×${s.count}` : ''}{s.required ? '（必填）' : ''}</span>
+          ))}</div>
+          <div style={{ marginTop: 4, color: '#5b6678' }}>标红的必填项如果这次生成没有对应素材，会直接提示缺什么，不会白跑一次。</div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function ApiSettings() {
   const [cfg, setCfg] = useState(() => {
@@ -62,8 +198,20 @@ export function ApiSettings() {
         baseUrl: all[m]?.baseUrl ?? meta.defaultBase ?? '',
         apiKey: all[m]?.apiKey ?? '',
         model: all[m]?.model ?? meta.defaultModel ?? '',
-        endpoint: all[m]?.endpoint ?? meta.defaultEndpoint ?? '',
+        endpoint: all[m]?.endpoint ?? '',
         pollPath: all[m]?.pollPath ?? '',
+        // 工作流型服务（AutoDL 等）：选一条工作流即可，不需要模型名。
+        workflowId: all[m]?.workflowId ?? '',
+        workflowName: all[m]?.workflowName ?? '',
+        workflowExtraText: all[m]?.workflowExtra ? JSON.stringify(all[m].workflowExtra) : '',
+        // 接入类型：留空=自动识别（按域名/模型名），可手动覆盖成 openai / workflow
+        kind: all[m]?.kind ?? '',
+        // 工作流接口路径模板：留空用平台默认值（AutoDL 实测路径）
+        wfPathList: all[m]?.workflowPaths?.list ?? '',
+        wfPathDetail: all[m]?.workflowPaths?.detail ?? '',
+        wfPathSubmit: all[m]?.workflowPaths?.submit ?? '',
+        wfPathResult: all[m]?.workflowPaths?.result ?? '',
+        authScheme: all[m]?.authScheme ?? '',
         size: all[m]?.size ?? '',
         videoMode: all[m]?.videoMode ?? '',
         engine: all[m]?.engine ?? '',
@@ -81,6 +229,11 @@ export function ApiSettings() {
   // 改动未保存时给出显式提醒：徽章只代表「输入框里有值」，不代表已写入 localStorage。
   // 少了这条提示，用户很容易「填完就走」，然后被下游报「未配置」而完全对不上。
   const [dirty, setDirty] = useState(false);
+  // 「高级」默认全部收起：用户 2026-10-27 明确要求只填 Base URL / Key / 模型名，
+  // 其余一律自动推断。高级项保留但不再占据主界面。
+  const [advOpen, setAdvOpen] = useState({});
+  // 附加参数（JSON）解析失败时的提示
+  const [jsonErr, setJsonErr] = useState('');
 
   const setField = (m, key, val) => {
     setCfg((c) => ({ ...c, [m]: { ...c[m], [key]: val } }));
@@ -88,7 +241,32 @@ export function ApiSettings() {
   };
 
   const onSave = () => {
-    saveAllModelConfig(cfg);
+    // 「附加参数」是手填 JSON，落盘前转成对象；写错不阻断保存，但会提示。
+    const clean = {};
+    ORDER.forEach((m) => {
+      const c = { ...(cfg[m] || {}) };
+      const raw = String(c.workflowExtraText || '').trim();
+      if (raw) {
+        try {
+          c.workflowExtra = JSON.parse(raw);
+        } catch {
+          c.workflowExtra = {};
+          setJsonErr(`「${MODALITIES[m]?.label || m}」附加参数不是合法 JSON，已忽略，其余配置照常保存。`);
+        }
+      }
+      delete c.workflowExtraText;
+      // 路径模板：只把填过的写进去，留空的交给平台默认值
+      const paths = {};
+      if (c.wfPathList) paths.list = c.wfPathList;
+      if (c.wfPathDetail) paths.detail = c.wfPathDetail;
+      if (c.wfPathSubmit) paths.submit = c.wfPathSubmit;
+      if (c.wfPathResult) paths.result = c.wfPathResult;
+      c.workflowPaths = paths;
+      ['wfPathList', 'wfPathDetail', 'wfPathSubmit', 'wfPathResult'].forEach((k) => delete c[k]);
+      clean[m] = c;
+    });
+    saveAllModelConfig(clean);
+    setCfg(clean);
     setSaved(true);
     setDirty(false);
     setTimeout(() => setSaved(false), 2200);
@@ -111,6 +289,14 @@ export function ApiSettings() {
         以 OpenAI 兼容接口为统一抽象，可对接 OpenAI / DeepSeek / 通义 / 智谱 / Moonshot / 本地 Ollama 等。
       </div>
 
+      {jsonErr && (
+        <div style={{
+          marginBottom: 12, padding: '9px 11px', borderRadius: 8,
+          background: 'rgba(220,38,38,.1)', border: '1px solid rgba(220,38,38,.32)',
+          fontSize: 11.5, color: '#b91c1c', lineHeight: 1.62,
+        }}>{jsonErr}</div>
+      )}
+
       {dirty && (
         <div style={{
           marginBottom: 12, padding: '9px 11px', borderRadius: 8,
@@ -131,6 +317,13 @@ export function ApiSettings() {
         const showPoll = m === 'video' || m === 'music';
         const presetValue =
           PROVIDER_PRESETS.find((p) => p.base === (c.baseUrl || ''))?.base || '__custom__';
+        // 自动推断出的值（用于占位提示；用户填了就以用户为准）
+        const prov = detectProvider(c.baseUrl, c.model);
+        // 手动指定的接入类型优先于自动识别
+        const isWorkflow = (c.kind || prov?.kind) === 'workflow';
+        const autoEp = prov?.endpoints?.[m] || meta.defaultEndpoint || '';
+        const autoScheme = prov?.authScheme || 'bearer';
+        const autoPoll = prov?.poll?.[m] || '';
 
         return (
           <div key={m} style={subCard}>
@@ -182,135 +375,223 @@ export function ApiSettings() {
               <HelpHint>{FIELD_HELP.apiKey}</HelpHint>
             </div>
 
-            {/* model */}
-            <div style={{ marginBottom: showEndpoint ? 12 : 0 }}>
-              <label style={labelStyle}>模型名 (Model)</label>
-              <input
-                style={inputStyle} value={c.model || ''}
-                placeholder={meta.placeholderModel || 'gpt-4o-mini'}
-                onChange={(e) => setField(m, 'model', e.target.value)}
-              />
-              <HelpHint>{FIELD_HELP.model}</HelpHint>
-            </div>
+            {/* 工作流型服务：选工作流代替填模型名（模型名对它没意义，反而会让人以为是必填） */}
+            {isWorkflow ? (
+              <WorkflowPicker m={m} c={c} prov={prov} onPick={setField} />
+            ) : (
+              <div style={{ marginBottom: showEndpoint ? 12 : 0 }}>
+                <label style={labelStyle}>模型名 (Model)</label>
+                <input
+                  style={inputStyle} value={c.model || ''}
+                  placeholder={meta.placeholderModel || 'gpt-4o-mini'}
+                  onChange={(e) => setField(m, 'model', e.target.value)}
+                />
+                <HelpHint>{FIELD_HELP.model}</HelpHint>
+              </div>
+            )}
 
-            {/* endpoint（仅视频 / 音乐等非标准模态） */}
-            {showEndpoint && (
-              <div style={{ marginBottom: 12 }}>
-                <label style={labelStyle}>接口路径 (Endpoint)</label>
-                <input
-                  style={inputStyle} value={c.endpoint || ''}
-                  placeholder={meta.defaultEndpoint || '/video/generations'}
-                  onChange={(e) => setField(m, 'endpoint', e.target.value)}
-                />
-                <HelpHint>{FIELD_HELP.endpoint}</HelpHint>
-              </div>
-            )}
-            {/* 图片专有：参考图字段名 + 数组开关 + 负向词开关（全部配置化，不绑定任何厂商） */}
-            {m === 'image' && (
-              <>
-                <div style={{ marginBottom: 12 }}>
-                  <label style={labelStyle}>参考图字段名 (Image Field)</label>
-                  <input
-                    style={inputStyle} value={c.imageField || ''}
-                    placeholder="image_url（留空默认）"
-                    onChange={(e) => setField(m, 'imageField', e.target.value)}
-                  />
-                  <HelpHint>{FIELD_HELP.imageField}</HelpHint>
+            {/* 自动识别结果：让用户知道软件替他推断了什么（可见、可改） */}
+            <AutoDetected m={m} c={c} />
+
+            {/* 高级：默认收起。以上都是自动推断的，只有特殊服务才需要动。 */}
+            <div style={{ marginTop: 4 }}>
+              <button
+                type="button"
+                onClick={() => setAdvOpen((s) => ({ ...s, [m]: !s[m] }))}
+                style={{
+                  background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
+                  fontSize: 11.5, color: '#6d28d9', fontFamily: 'inherit', display: 'inline-flex',
+                  alignItems: 'center', gap: 4,
+                }}
+              >
+                {advOpen[m] ? '▾' : '▸'} 高级（通常不用改）
+              </button>
+              {advOpen[m] && (
+                <div style={{
+                  marginTop: 10, padding: 12, borderRadius: 8,
+                  background: 'rgba(15,23,42,0.028)', border: '1px dashed rgba(15,23,42,0.16)',
+                }}>
+                  {/* endpoint（仅视频 / 音乐等非标准模态） */}
+                  {showEndpoint && (
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={labelStyle}>接口路径 (Endpoint)</label>
+                      <input
+                        style={inputStyle} value={c.endpoint || ''}
+                        placeholder={autoEp || meta.defaultEndpoint || '/video/generations'}
+                        onChange={(e) => setField(m, 'endpoint', e.target.value)}
+                      />
+                      <HelpHint>{FIELD_HELP.endpoint}</HelpHint>
+                    </div>
+                  )}
+                  {/* 接入类型：自动识别失败时的手动兜底，也是接入 AutoDL 之外同类平台的入口 */}
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={labelStyle}>接入类型</label>
+                    <select
+                      value={c.kind || prov?.kind || 'openai'}
+                      onChange={(e) => setField(m, 'kind', e.target.value)}
+                      style={{ ...inputStyle, cursor: 'pointer' }}
+                    >
+                      <option value="openai">OpenAI 兼容（绝大多数服务）</option>
+                      <option value="workflow">工作流型（ComfyUI 工作流 API）</option>
+                    </select>
+                    <HelpHint>{FIELD_HELP.kind}</HelpHint>
+                  </div>
+                  {/* 鉴权方式：默认 Bearer，AutoDL 等工作流型服务要求原样 Token */}
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={labelStyle}>鉴权方式</label>
+                    <select
+                      value={c.authScheme || autoScheme}
+                      onChange={(e) => setField(m, 'authScheme', e.target.value)}
+                      style={{ ...inputStyle, cursor: 'pointer' }}
+                    >
+                      <option value="bearer">Bearer（绝大多数服务）</option>
+                      <option value="raw">原样 Token（AutoDL 等）</option>
+                    </select>
+                    <HelpHint>{FIELD_HELP.authScheme}</HelpHint>
+                  </div>
+                  {/* 图片专有：参考图字段名 + 数组开关 + 负向词开关 */}
+                  {m === 'image' && (
+                    <>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={labelStyle}>参考图字段名（留空自动试）</label>
+                        <input
+                          style={inputStyle} value={c.imageField || ''}
+                          placeholder="留空则按 image_url → image → … 自动试"
+                          onChange={(e) => setField(m, 'imageField', e.target.value)}
+                        />
+                        <HelpHint>{FIELD_HELP.imageField}</HelpHint>
+                      </div>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={c.imageFieldArray === true}
+                            onChange={(e) => setField(m, 'imageFieldArray', e.target.checked)}
+                            style={{ cursor: 'pointer', margin: 0 }}
+                          />
+                          参考图按数组发送（留空则报错时自动切换）
+                        </label>
+                        <HelpHint>{FIELD_HELP.imageFieldArray}</HelpHint>
+                      </div>
+                      <div style={{ marginBottom: 0 }}>
+                        <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={c.sendNegative !== false}
+                            onChange={(e) => setField(m, 'sendNegative', e.target.checked)}
+                            style={{ cursor: 'pointer', margin: 0 }}
+                          />
+                          提交负向词 (negative_prompt)
+                        </label>
+                        <HelpHint>{FIELD_HELP.sendNegative}</HelpHint>
+                      </div>
+                    </>
+                  )}
+                  {m === 'video' && (
+                    <>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={labelStyle}>尺寸 (Size，可选)</label>
+                        <input
+                          style={inputStyle} value={c.size || ''}
+                          placeholder="留空用服务默认（推荐）"
+                          onChange={(e) => setField(m, 'size', e.target.value)}
+                        />
+                        <HelpHint>{FIELD_HELP.size}</HelpHint>
+                      </div>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={labelStyle}>生成模式 (Mode，可选)</label>
+                        <select
+                          value={c.videoMode || ''}
+                          onChange={(e) => setField(m, 'videoMode', e.target.value)}
+                          style={{ ...inputStyle, cursor: 'pointer' }}
+                        >
+                          <option value="">自动（按本次素材判断，推荐）</option>
+                          <option value="text">纯文字生成</option>
+                          <option value="keyframe">首尾帧控制画面起止</option>
+                          <option value="reference">参考图 / 参考音频</option>
+                        </select>
+                        <HelpHint>{FIELD_HELP.videoMode}</HelpHint>
+                      </div>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={c.videoSendNegative !== false}
+                            onChange={(e) => setField(m, 'videoSendNegative', e.target.checked)}
+                            style={{ cursor: 'pointer', margin: 0 }}
+                          />
+                          提交负向词 (negative_prompt)
+                        </label>
+                        <HelpHint>{FIELD_HELP.videoSendNegative}</HelpHint>
+                      </div>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={labelStyle}>附加字段 engine（可选）</label>
+                        <input
+                          style={inputStyle} value={c.engine || ''}
+                          placeholder="留空则不发送该字段"
+                          onChange={(e) => setField(m, 'engine', e.target.value)}
+                        />
+                        <HelpHint>{FIELD_HELP.engine}</HelpHint>
+                      </div>
+                    </>
+                  )}
+                  {/* 工作流型：接口路径模板。默认已按 AutoDL 实测填好，换平台才需要改。 */}
+                  {isWorkflow && (
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={labelStyle}>接口路径模板（换平台才用改）</label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <input
+                          style={inputStyle} value={c.wfPathList || ''}
+                          placeholder={`列表 ${DEFAULT_WORKFLOW_PATHS.list}`}
+                          onChange={(e) => setField(m, 'wfPathList', e.target.value)}
+                        />
+                        <input
+                          style={inputStyle} value={c.wfPathDetail || ''}
+                          placeholder={`详情 ${DEFAULT_WORKFLOW_PATHS.detail}`}
+                          onChange={(e) => setField(m, 'wfPathDetail', e.target.value)}
+                        />
+                        <input
+                          style={inputStyle} value={c.wfPathSubmit || ''}
+                          placeholder={`提交 ${DEFAULT_WORKFLOW_PATHS.submit}`}
+                          onChange={(e) => setField(m, 'wfPathSubmit', e.target.value)}
+                        />
+                        <input
+                          style={inputStyle} value={c.wfPathResult || ''}
+                          placeholder={`查结果 ${DEFAULT_WORKFLOW_PATHS.result}`}
+                          onChange={(e) => setField(m, 'wfPathResult', e.target.value)}
+                        />
+                      </div>
+                      <HelpHint>{FIELD_HELP.wfPaths}</HelpHint>
+                    </div>
+                  )}
+                  {/* 工作流型：自动映射认不出来的字段（seed、emo_* 之类）留一个手填兜底 */}
+                  {isWorkflow && (
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={labelStyle}>附加参数（JSON，可选）</label>
+                      <textarea
+                        style={{ ...inputStyle, minHeight: 62, resize: 'vertical', lineHeight: 1.5 }}
+                        value={c.workflowExtraText || ''}
+                        placeholder='{"seed": 123, "emo_happy": 0.3}'
+                        onChange={(e) => { setJsonErr(''); setField(m, 'workflowExtraText', e.target.value); }}
+                      />
+                      <HelpHint>{FIELD_HELP.workflowExtra}</HelpHint>
+                    </div>
+                  )}
+                  {/* pollPath（任务型 API：先返回 id 再轮询，如 Kling / Runway / Sora） */}
+                  {showPoll && (
+                    <div style={{ marginBottom: 0 }}>
+                      <label style={labelStyle}>轮询路径 (Poll Path，任务型 API 用)</label>
+                      <input
+                        style={inputStyle} value={c.pollPath || ''}
+                        placeholder={autoPoll || '/tasks/{id} 或完整轮询 URL'}
+                        onChange={(e) => setField(m, 'pollPath', e.target.value)}
+                      />
+                      <HelpHint>{FIELD_HELP.pollPath}</HelpHint>
+                    </div>
+                  )}
                 </div>
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={c.imageFieldArray === true}
-                      onChange={(e) => setField(m, 'imageFieldArray', e.target.checked)}
-                      style={{ cursor: 'pointer', margin: 0 }}
-                    />
-                    参考图按数组发送
-                  </label>
-                  <HelpHint>{FIELD_HELP.imageFieldArray}</HelpHint>
-                </div>
-                <div style={{ marginBottom: 0 }}>
-                  <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={c.sendNegative !== false}
-                      onChange={(e) => setField(m, 'sendNegative', e.target.checked)}
-                      style={{ cursor: 'pointer', margin: 0 }}
-                    />
-                    提交负向词 (negative_prompt)
-                  </label>
-                  <HelpHint>{FIELD_HELP.sendNegative}</HelpHint>
-                </div>
-              </>
-            )}
-            {/* size（视频尺寸，厂商特定，可选） */}
-            {m === 'video' && (
-              <div style={{ marginBottom: 12 }}>
-                <label style={labelStyle}>尺寸 (Size，可选)</label>
-                <input
-                  style={inputStyle} value={c.size || ''}
-                  placeholder="720P（部分服务必填；其他按文档填或留空）"
-                  onChange={(e) => setField(m, 'size', e.target.value)}
-                />
-                <HelpHint>{FIELD_HELP.size}</HelpHint>
-              </div>
-            )}
-            {/* videoMode（决定使用哪类素材：文字 / 首尾帧 / 参考图音频） */}
-            {m === 'video' && (
-              <div style={{ marginBottom: 12 }}>
-                <label style={labelStyle}>生成模式 (Mode，可选)</label>
-                <select
-                  value={c.videoMode || ''}
-                  onChange={(e) => setField(m, 'videoMode', e.target.value)}
-                  style={{ ...inputStyle, cursor: 'pointer' }}
-                >
-                  <option value="">跟随调用方（默认）</option>
-                  <option value="text">纯文字生成</option>
-                  <option value="keyframe">首尾帧控制画面起止</option>
-                  <option value="reference">参考图 / 参考音频</option>
-                </select>
-                <HelpHint>{FIELD_HELP.videoMode}</HelpHint>
-              </div>
-            )}
-            {/* 视频专有：提交负向词开关（与图片一致，默认开，但只发填写的负向词、不补内置词） */}
-            {m === 'video' && (
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={c.videoSendNegative !== false}
-                    onChange={(e) => setField(m, 'videoSendNegative', e.target.checked)}
-                    style={{ cursor: 'pointer', margin: 0 }}
-                  />
-                  提交负向词 (negative_prompt)
-                </label>
-                <HelpHint>{FIELD_HELP.videoSendNegative}</HelpHint>
-              </div>
-            )}
-            {/* engine（厂商自定义字段，留空不发送） */}
-            {m === 'video' && (
-              <div style={{ marginBottom: 12 }}>
-                <label style={labelStyle}>附加字段 engine（可选）</label>
-                <input
-                  style={inputStyle} value={c.engine || ''}
-                  placeholder="留空则不发送该字段"
-                  onChange={(e) => setField(m, 'engine', e.target.value)}
-                />
-                <HelpHint>{FIELD_HELP.engine}</HelpHint>
-              </div>
-            )}
-            {/* pollPath（任务型 API：先返回 id 再轮询，如 Kling / Runway / Sora） */}
-            {showPoll && (
-              <div style={{ marginBottom: 0 }}>
-                <label style={labelStyle}>轮询路径 (Poll Path，任务型 API 用)</label>
-                <input
-                  style={inputStyle} value={c.pollPath || ''}
-                  placeholder="/tasks/{id} 或完整轮询 URL"
-                  onChange={(e) => setField(m, 'pollPath', e.target.value)}
-                />
-                <HelpHint>{FIELD_HELP.pollPath}</HelpHint>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         );
       })}

@@ -581,7 +581,7 @@ export function MotionStep({ project, update, log }) {
   };
 
   /** 生成单个分镜并回写到该镜 */
-  const genOne = async (idx, k, total) => {
+  const genOne = async (idx, k, total, onProgress) => {
     const sh = shots[idx] || {};
     setProgress(T.motion.batchRunning(k + 1, total));
     log?.(`正在生成第 ${idx + 1} 镜 · ${wf}`);
@@ -653,6 +653,8 @@ export function MotionStep({ project, update, log }) {
       engine, mode: m.videoMode || '', prompt: finalPrompt, negative,
       images: refUrls, firstFrame: first, lastFrame: last,
       duration, ratio, audio,
+      // 上游排队/限流的重试进度回传，让队列条目显示「等待上游空位」而不是干等
+      onProgress,
     });
 
     // 🔴 播放修复：把成片拉回本地用 asset:// 播放（远程 URL 关机/签名过期就播不了）
@@ -738,8 +740,26 @@ export function MotionStep({ project, update, log }) {
         patchJobs((jobs) => jobs.map((j) => (j.id === jobId
           ? { ...j, status: 'running', progress: `生成中 ${k + 1}/${list.length}`, startedAt: Date.now() }
           : j)));
+        // 上游进度回传：排队满/限流时把「等待空位（重试 n/m）」写进队列条目，
+        // 免得用户只看到「生成中」却不知为何半天没结果。
+        const onProgress = (status, extra) => {
+          let text = '';
+          if (status === 'retry') {
+            text = `上游排队中，等待空位（重试 ${extra?.attempt || 1}/${extra?.max || 5}）`;
+            log?.(`第 ${list[k] + 1} 镜：${text}，${Math.round((extra?.waitMs || 0) / 1000)} 秒后重试`);
+          } else if (typeof extra === 'string' && extra) {
+            text = extra;                 // generatePanelVideo 收尾传的 '完成'
+          } else if (/queued|pending/i.test(String(status))) {
+            text = '上游排队中…';
+          } else if (/in_progress|processing|running/i.test(String(status))) {
+            text = '上游生成中…';
+          }
+          if (text) {
+            patchJobs((jobs) => jobs.map((j) => (j.id === jobId ? { ...j, progress: text } : j)));
+          }
+        };
         try {
-          const url = await genOne(list[k], k, list.length);
+          const url = await genOne(list[k], k, list.length, onProgress);
           ok += 1;
           patchJobs((jobs) => jobs.map((j) => (j.id === jobId
             ? { ...j, status: 'done', progress: '已完成', url: url || '', endedAt: Date.now() }

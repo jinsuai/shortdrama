@@ -59,6 +59,67 @@ export const MODALITIES = {
   },
 };
 
+/**
+ * 厂商特征库：只靠 Base URL 域名 / 模型名就能认出服务商，从而自动补齐
+ * 鉴权方式、接口路径、轮询路径等「本该自动的东西」。
+ *
+ * 设计原则（用户 2026-10-27 明确）：设置页只让用户填 Base URL / Key / 模型名，
+ * 其余一律自动；推断结果在「高级」里可见可改，改了就以用户为准。
+ *
+ * kind: 'openai' = OpenAI 兼容协议；'workflow' = 工作流型 API（先提交再轮询）。
+ */
+export const PROVIDER_HINTS = [
+  {
+    key: 'openai', name: 'OpenAI', kind: 'openai', authScheme: 'bearer',
+    hosts: ['api.openai.com'], models: /^(gpt-|chatgpt|o1|o3|o4|text-|dall-e|sora|tts-|whisper)/i,
+    endpoints: {},
+  },
+  {
+    key: 'deepseek', name: 'DeepSeek', kind: 'openai', authScheme: 'bearer',
+    hosts: ['api.deepseek.com'], models: /^deepseek/i,
+  },
+  {
+    key: 'qwen', name: '通义千问（DashScope）', kind: 'openai', authScheme: 'bearer',
+    hosts: ['dashscope.aliyuncs.com'], models: /^(qwen|wan)/i,
+  },
+  {
+    key: 'zhipu', name: '智谱 GLM', kind: 'openai', authScheme: 'bearer',
+    hosts: ['open.bigmodel.cn'], models: /^(glm|chatglm)/i,
+  },
+  {
+    key: 'moonshot', name: 'Moonshot', kind: 'openai', authScheme: 'bearer',
+    hosts: ['api.moonshot.cn'], models: /^(moonshot|kimi)/i,
+  },
+  {
+    key: 'agnes', name: 'Agnes AI', kind: 'openai', authScheme: 'bearer',
+    hosts: ['api.agnes-ai.cn'], models: /^agnes/i,
+    // Agnes 视频不在标准 /video/generations 上；轮询也不带 /v1 前缀（用绝对地址模板）。
+    endpoints: { video: '/videos', image: '/images/generations' },
+    poll: { video: 'https://api.agnes-ai.cn/agnesapi?video_id={id}' },
+  },
+  {
+    key: 'autodl', name: 'AutoDL（ComfyUI 工作流）', kind: 'workflow', authScheme: 'raw',
+    hosts: ['autodl.art'], models: /^$/,
+    endpoints: {},
+    // 工作流型：提交 / 查询走「工作流 id + 任务 id」两步，路径模板如下（已在 www 域实测通过）。
+    workflow: {
+      list: '/comfyui/workflows',
+      detail: '/comfyui/workflows/{id}',
+      submit: '/comfyui/comfyui_workflow/{id}',
+      result: '/comfyui/comfyui_workflow/result/{task}',
+      listMethod: 'POST',
+    },
+  },
+  {
+    key: 'ollama', name: 'Ollama（本地）', kind: 'openai', authScheme: 'bearer',
+    hosts: ['localhost:11434', '127.0.0.1:11434'], models: /^(llama|qwen|mistral|gemma)/i,
+  },
+  {
+    key: 'vllm', name: 'vLLM（本地）', kind: 'openai', authScheme: 'bearer',
+    hosts: ['localhost:8000', '127.0.0.1:8000'], models: /./,
+  },
+];
+
 // 常见厂商预设，用户可在设置里一键填入 baseUrl。
 export const PROVIDER_PRESETS = [
   { name: 'OpenAI', base: 'https://api.openai.com/v1' },
@@ -66,10 +127,126 @@ export const PROVIDER_PRESETS = [
   { name: '通义千问（DashScope）', base: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
   { name: '智谱 GLM', base: 'https://open.bigmodel.cn/api/paas/v4' },
   { name: 'Moonshot', base: 'https://api.moonshot.cn/v1' },
+  { name: 'Agnes AI', base: 'https://api.agnes-ai.cn/v1' },
+  { name: 'AutoDL（ComfyUI 工作流）', base: 'https://www.autodl.art/api/v1' },
   { name: 'Ollama（本地）', base: 'http://localhost:11434/v1' },
   { name: 'vLLM（本地）', base: 'http://localhost:8000/v1' },
   { name: '自定义', base: '' },
 ];
+
+/** 按 Base URL 域名（优先）或模型名认出服务商；认不出返回 null，走通用 OpenAI 兼容逻辑。 */
+export function detectProvider(baseUrl, model) {
+  const host = String(baseUrl || '').toLowerCase();
+  const mdl = String(model || '').trim();
+  let byModel = null;
+  for (const p of PROVIDER_HINTS) {
+    if (p.hosts.some((h) => host.includes(h))) return p;
+    if (!byModel && p.models && p.models.test(mdl)) byModel = p;
+  }
+  return byModel;
+}
+
+/** 各模态的标准 OpenAI 兼容路径（未识别出厂商时的兜底） */
+const STANDARD_ENDPOINT = {
+  text: '/chat/completions',
+  image: '/images/generations',
+  video: '/video/generations',
+  tts: '/audio/speech',
+  music: '/audio/generations',
+  model3d: '',
+};
+
+/** 自动推断接口路径：用户填的 > 厂商特征库的 > 该模态的标准路径 */
+export function autoEndpoint(modality, cfg, provider) {
+  const saved = String(cfg?.endpoint || '').trim();
+  if (saved) return saved;
+  const fromProvider = provider?.endpoints?.[modality];
+  if (fromProvider) return fromProvider;
+  return STANDARD_ENDPOINT[modality] || '';
+}
+
+/**
+ * 「自愈记忆」：某次调用发现某个字段名这个服务不认，换一个候选后成功了，
+ * 就把能用的记下来，下次直接用，不再让用户手填。存 localStorage，按模态隔离。
+ */
+const ADAPT_KEY = 'MODEL_ADAPT';
+
+export function readAdapt(modality) {
+  try {
+    const all = JSON.parse(localStorage.getItem(ADAPT_KEY) || '{}');
+    return all[modality] || {};
+  } catch {
+    return {};
+  }
+}
+
+export function writeAdapt(modality, patch) {
+  try {
+    const all = JSON.parse(localStorage.getItem(ADAPT_KEY) || '{}');
+    all[modality] = { ...(all[modality] || {}), ...patch };
+    localStorage.setItem(ADAPT_KEY, JSON.stringify(all));
+  } catch { /* 存储不可用时忽略，不影响主流程 */ }
+}
+
+/**
+ * 最终生效配置 = 用户填的 + 自动推断的 + 自愈记忆的（优先级依次降低）。
+ * 所有生成链路统一读它，保证「只填三样也能跑」。
+ */
+/** 读 localStorage 里该模态的原始存档（不含任何默认值兜底）——用于判断「用户到底有没有填过」 */
+function getRawSaved(modality) {
+  try {
+    const all = JSON.parse(localStorage.getItem(KEY) || '{}');
+    return all[modality] || {};
+  } catch {
+    return {};
+  }
+}
+
+export function getResolvedConfig(modality) {
+  const saved = getModelConfig(modality);
+  const raw = getRawSaved(modality);
+  const prov = detectProvider(saved.baseUrl, saved.model);
+  const adapt = readAdapt(modality);
+  const meta = MODALITIES[modality] || {};
+  return {
+    ...saved,
+    providerKey: prov?.key || '',
+    providerName: prov?.name || '',
+    // 接入类型：默认按厂商自动识别；认不出来（或识别错）时用户可在「高级」里手动指定，
+    // 这样 AutoDL 之外的同类平台（RunningHub、自建 ComfyUI-on-API）也能走工作流那条路。
+    kind: saved.kind || prov?.kind || 'openai',
+    authScheme: saved.authScheme || prov?.authScheme || 'bearer',
+    // 🔴 必须看「用户原始存档」而不是 getModelConfig 的结果：后者会用 meta.defaultEndpoint
+    //    （如 /video/generations）兜底，会把 Agnes 的 /videos 这类厂商路径永远盖掉。
+    endpoint: autoEndpoint(modality, raw, prov),
+    pollPath: saved.pollPath || prov?.poll?.[modality] || '',
+    // 参考图字段名：用户指定 > 自愈记忆 > 空（调用方按候选列表自动试）
+    imageField: saved.imageField || adapt.imageField || '',
+    imageFieldArray: saved.imageFieldArray ?? adapt.imageFieldArray ?? false,
+    // 负向词：默认发，若服务不认会被自愈机制自动关掉并记住
+    sendNegative: saved.sendNegative ?? adapt.sendNegative ?? true,
+    videoSendNegative: saved.videoSendNegative ?? adapt.videoSendNegative ?? true,
+    // model 字段：工作流型服务不需要 model，其余默认发
+    sendModel: saved.sendModel ?? (prov?.kind === 'workflow' ? false : true),
+    // 工作流型：选中的工作流 id 与路径模板（用户覆盖 > 厂商预设 > 通用默认）
+    workflowId: saved.workflowId || '',
+    workflowExtra: saved.workflowExtra || {},
+    workflowPaths: {
+      list: '/comfyui/workflows',
+      detail: '/comfyui/workflows/{id}',
+      submit: '/comfyui/comfyui_workflow/{id}',
+      result: '/comfyui/comfyui_workflow/result/{task}',
+      listMethod: 'POST',
+      ...(prov?.workflow || {}),
+      ...(saved.workflowPaths || {}),
+    },
+    // 工作流型结果 URL 有效期很短，默认转存本机
+    persistMedia: saved.persistMedia ?? true,
+    // 供 UI 显示「自动推断结果」
+    autoEndpoint: !raw.endpoint ? autoEndpoint(modality, raw, prov) : '',
+    meta,
+  };
+}
 
 export function getModelConfig(modality) {
   try {
