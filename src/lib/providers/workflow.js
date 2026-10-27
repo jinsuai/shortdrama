@@ -181,7 +181,16 @@ export function describeRules(rules) {
     const req = items.some((it) => it.label === label && it.required);
     summary.push({ label, count: n, required: req });
   });
-  return { items, summary };
+  // 这条工作流「吃不吃」我们的素材。纯文生的工作流（如 H3 z0901）一个媒体槽位都没有，
+  // 选了它却带着关键帧/参考音频去生成，素材会被静默丢弃、结果跟关键帧完全无关。
+  // 所以在选择阶段就把这件事说清楚，而不是等用户发现「画面怎么跟关键帧不一样」。
+  const slots = Object.entries(rules || {}).map(([name, rule]) => classify(name, rule));
+  const accepts = {
+    image: slots.filter((k) => k === 'images' || k === 'first_frame' || k === 'last_frame').length,
+    audio: slots.filter((k) => k === 'audios').length,
+    video: slots.filter((k) => k === 'videos').length,
+  };
+  return { items, summary, accepts };
 }
 
 /** 数值字段按 min/max 夹紧，类型要求整数就取整 */

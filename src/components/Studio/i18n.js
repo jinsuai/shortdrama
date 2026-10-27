@@ -4,7 +4,7 @@
  */
 
 // 读「设置 → 模型配置」里用户实际填的模型名，界面文案必须与实际调用的一致
-import { getModelConfig } from '../../lib/providers/settings.js';
+import { getModelConfig, getResolvedConfig } from '../../lib/providers/settings.js';
 
 export const T = {
   // ── 品牌 ──
@@ -665,6 +665,18 @@ export function videoModelOptions() {
   const host = cfg.host;
   const endpoint = cfg.endpoint;
 
+  // 工作流型服务（AutoDL 等）实际靠 workflowId 路由，既不用 model 名也不走 endpoint。
+  // 若卡片仍显示残留下来的模型名和 /videos 路径，会让人误以为在调那个模型，故单独分支。
+  if (cfg.kind === 'workflow') {
+    const name = cfg.workflowName || cfg.workflowId;
+    return list.map((o) => ({
+      ...o,
+      label: name || '未选择工作流',
+      desc: [cfg.host, name ? '工作流型 · 字段按平台说明自动映射' : '请先在「设置 → 视频模型」拉取列表并选择工作流']
+        .filter(Boolean).join(' '),
+    }));
+  }
+
   return list.map((o) => ({
     ...o,
     label: model || '视频模型（未配置）',
@@ -676,26 +688,38 @@ export function videoModelOptions() {
 
 /** 视频模型显示名（日志 / 状态栏用）：配了什么就显示什么，未配置时用中性文案 */
 export function videoModelLabel() {
-  return readVideoCfg().model || '视频模型';
+  const cfg = readVideoCfg();
+  if (cfg.kind === 'workflow') return cfg.workflowName || cfg.workflowId || '工作流视频';
+  return cfg.model || '视频模型';
 }
 
-/** 读视频配置里 UI 需要的展示字段（model / 域名 / 接口路径） */
+/** 读视频配置里 UI 需要的展示字段（model / 域名 / 接口路径 / 接入类型） */
 function readVideoCfg() {
   let model = '';
   let base = '';
   let endpoint = '';
+  let kind = 'openai';
+  let workflowId = '';
+  let workflowName = '';
   try {
     const c = getModelConfig('video');
     model = String(c.model || '').trim();
     base = String(c.baseUrl || '').trim();
     endpoint = String(c.endpoint || '').trim();
   } catch {}
+  // kind / workflowId 只有「解析后」的配置才有（含厂商自动识别），原始存档里可能为空
+  try {
+    const r = getResolvedConfig('video');
+    kind = r.kind || 'openai';
+    workflowId = String(r.workflowId || '').trim();
+    workflowName = String(r.workflowName || '').trim();
+  } catch {}
   // 卡片里只显示域名：完整 baseUrl 太长会把两行文案撑破
   let host = base;
   try {
     if (base) host = new URL(base).host || base;
   } catch {}
-  return { model, base, host, endpoint };
+  return { model, base, host, endpoint, kind, workflowId, workflowName };
 }
 
 /** 画幅比例 */

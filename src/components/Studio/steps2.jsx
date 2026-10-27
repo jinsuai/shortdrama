@@ -608,7 +608,12 @@ export function MotionStep({ project, update, log }) {
     }
     const last = lastUrl || shots[idx + 1]?.imageUrl || sh.imageUrl || '';
 
-    let finalPrompt = String(prompt || '').trim() || shotPrompt(idx);
+    // 🔴 本页提示词框非空时会覆盖分镜自己的 videoPrompt —— 用户看到的是分镜里的词、
+    // 提交的却是这里的一条，是「提示词对不上」最常见的成因，所以保留原值以便日志里说清来源。
+    const basePrompt = String(prompt || '').trim() || shotPrompt(idx);
+    const overridesShot = !!String(prompt || '').trim() && !!shotPrompt(idx)
+      && basePrompt !== shotPrompt(idx);
+    let finalPrompt = basePrompt;
 
     // 提示词润色（失败按原词继续）
     if (polishOn && finalPrompt) {
@@ -645,6 +650,18 @@ export function MotionStep({ project, update, log }) {
       } finally {
         setPolishing(false);
       }
+    }
+
+    // 把「这一镜到底提交了什么」写进日志：用户能直接跟分镜里显示的提示词对上，
+    // 不用猜是本页覆盖、还是润色改写、还是分镜本身为空。
+    {
+      const polished = finalPrompt !== basePrompt;
+      const src = !basePrompt ? '（空）'
+        : overridesShot ? '本页提示词框（已覆盖该分镜原文）'
+        : '分镜视频运动提示词';
+      log?.(`第 ${idx + 1} 镜提示词来源：${src}${polished ? ' → 已润色改写' : ''}`);
+      const shown = finalPrompt.length > 240 ? `${finalPrompt.slice(0, 240)}…` : finalPrompt;
+      log?.(`第 ${idx + 1} 镜提交提示词：${shown || '（空）'}`);
     }
 
     const audio = await resolveAudio(idx);
@@ -871,8 +888,17 @@ export function MotionStep({ project, update, log }) {
             width: '100%', minHeight: 76, background: 'rgba(15,23,42,0.064)',
             border: '1px solid rgba(15,23,42,0.144)', borderRadius: 8, padding: 11,
             color: '#374151', fontSize: 12.5, lineHeight: 1.6, resize: 'vertical',
-            fontFamily: 'inherit', outline: 'none', marginBottom: 14,
+            fontFamily: 'inherit', outline: 'none', marginBottom: 4,
           }} />
+        {/* 🔴 提示词对不上，多半出在这里：本框非空会覆盖各分镜自己的视频运动提示词，
+            润色开启又会再改写一遍。与其事后靠日志排查，不如在填的时候就说明白。 */}
+        <div style={{ fontSize: 10.5, lineHeight: 1.6, color: '#5b6678', marginBottom: 14 }}>
+          {String(prompt || '').trim()
+            ? <>⚠ 本框有内容，将<b>覆盖</b>各分镜自己的视频运动提示词{/* 未勾选目标分镜时提交逻辑默认只跑第 1 镜，这里要跟它一致 */
+              (targets.length || 1) > 1 ? `（当前 ${targets.length} 个分镜会共用这一条）` : ''}；清空本框才会用分镜原文。 </>
+            : <>留空时使用各分镜自己的「视频运动提示词」。 </>}
+          {polishOn && <>「{T.motion.polish}」已开启，提交给模型的是<b>润色改写后</b>的提示词。</>}
+        </div>
 
         {!!progress && (
           <div style={{

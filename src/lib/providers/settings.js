@@ -230,6 +230,7 @@ export function getResolvedConfig(modality) {
     sendModel: saved.sendModel ?? (prov?.kind === 'workflow' ? false : true),
     // 工作流型：选中的工作流 id 与路径模板（用户覆盖 > 厂商预设 > 通用默认）
     workflowId: saved.workflowId || '',
+    workflowName: saved.workflowName || '',
     workflowExtra: saved.workflowExtra || {},
     workflowPaths: {
       list: '/comfyui/workflows',

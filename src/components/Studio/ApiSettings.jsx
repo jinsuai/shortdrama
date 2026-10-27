@@ -182,6 +182,15 @@ function WorkflowPicker({ m, c, prov, onPick }) {
             }}>{s.label}{s.count > 1 ? `×${s.count}` : ''}{s.required ? '（必填）' : ''}</span>
           ))}</div>
           <div style={{ marginTop: 4, color: '#5b6678' }}>标红的必填项如果这次生成没有对应素材，会直接提示缺什么，不会白跑一次。</div>
+          {/* 不接受媒体的工作流要提前说清楚：否则用户带着关键帧生成，素材被静默丢弃却毫无察觉 */}
+          {summary.accepts && !summary.accepts.image && !summary.accepts.audio && !summary.accepts.video && (
+            <div style={{ marginTop: 4, color: '#b45309' }}>
+              ⚠ 这条工作流只吃提示词，分镜关键帧 / 参考图 / 配音都不会被使用。要画面跟关键帧一致，请改选带「参考图」或「首帧图」的工作流。
+            </div>
+          )}
+          {summary.accepts && summary.accepts.image > 0 && !summary.accepts.audio && (
+            <div style={{ marginTop: 4, color: '#5b6678' }}>注意：这条工作流没有音频槽位，配音不会传给模型（画面不会跟着声音走）。</div>
+          )}
         </div>
       )}
     </div>
