@@ -24,6 +24,17 @@ import { getModelConfig, isReasoningModel, reasoningThinkingOffBody } from './pr
 export const DEFAULT_SHOT_COUNT = 12;
 
 /**
+ * 单次 LLM 调用最多生成几个分镜（分片生成，根治输出截断）。
+ *
+ * 🔴 为什么必须分片：每个分镜要吐 imagePrompt + firstFramePrompt(六段) +
+ *    videoPrompt(五段) + continuity(四字段) 四大段，12 个分镜一次性输出轻松上万字，
+ *    必然撞上模型自身的输出上限——很多服务端会把 max_tokens 硬性夹到 4096/8192，
+ *    我们请求 16000 也没用，结果就是 JSON 被截断、只抢救出第 1 个分镜。
+ *    每批 3 个可把单批输出量压到约 1/4，即使被夹也能完整拿到；某批失败只损失该批。
+ */
+export const SHOT_BATCH_SIZE = 3;
+
+/**
  * 分析剧本 → 分镜数组。
  * @param {Object} p
  * @param {string} p.script
@@ -52,9 +63,8 @@ export async function analyzeStoryboard({ script, style = '', characters = [], s
 
   onLog?.('正在分析剧本，拆解分镜与生图提示词…');
   const client = new DispatchGlmClient();
-  // 🔴 思考模型防护：思考模型把「思考 token」也算进 max_tokens 额度，12 个分镜的大 JSON
-  //    会被思考挤掉导致截断（表现就是只解析出第 1 个分镜）。故：
-  //      ① 思考模型把上限抬到 16000（非思考也抬到 12000，6000 对 12 个嵌套分镜本来就偏紧）；
+  // 🔴 思考模型防护（保留）：思考模型把「思考 token」也算进 max_tokens 额度，会挤占 JSON 空间。
+  //      ① 思考模型把上限抬到 16000（非思考 12000）；
   //      ② 在支持的服务上（GLM-Z1 / Qwen-QwQ 等）关掉思考，省出全部额度给 JSON。
   const textModel = getModelConfig('text')?.model || '';
   const reasoning = isReasoningModel(textModel);
@@ -63,31 +73,70 @@ export async function analyzeStoryboard({ script, style = '', characters = [], s
   if (reasoning) {
     onLog?.(`检测到思考模型（${textModel}）：已抬高 token 上限并尽量关闭思考，避免分镜 JSON 被截断`);
   }
-  // 分镜是 token 最大的一次 JSON 调用（嵌套字段多），最容易输出残缺 JSON。
-  // 策略同实体抽取：先按 0.7 正常生成（内容需要创作性），解析失败则降温到 0.2 重试一次并强调格式。
-  let parsed = null;
-  let lastMsg = '';
-  for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
-    const p = attempt === 0
-      ? prompt
-      : `${prompt}\n\n【重要】上一次输出无法解析为 JSON（${lastMsg}）。请严格只输出一个 JSON 数组，不要任何解释文字、不要用代码围栏。`;
-    try {
-      const raw = await client.chat(p, {
-        system: PROMPT_JSON_ONLY_SYSTEM,
-        llmType: 'storyboard_split',
-        maxTokens,
-        ...(extra ? { extra } : {}),
-        temperature: attempt === 0 ? 0.7 : 0.2,
-      });
-      parsed = parseJsonLax(raw || '');
-    } catch (e) {
-      lastMsg = e?.message || String(e);
+
+  // 🔴 分片生成：一次只让模型吐 SHOT_BATCH_SIZE 个分镜，多批拼接成完整分镜表。
+  //    见 SHOT_BATCH_SIZE 注释——这是根治「只生成 1 个分镜」的关键，光抬高 max_tokens 没用。
+  const total = Math.max(1, Number(count) || DEFAULT_SHOT_COUNT);
+  const collected = [];
+  let tailAnchor = '';
+
+  for (let start = 1; start <= total; start += SHOT_BATCH_SIZE) {
+    const want = Math.min(SHOT_BATCH_SIZE, total - start + 1);
+    const end = start + want - 1;
+
+    // ⚠️ 模板里其实没有 {{count}} 占位（那处 replace 是空转），数量必须显式写进指令，
+    //    否则模型想生成几个就几个。
+    let batchPrompt = `${prompt}\n\n🔴 数量要求（最重要）：整篇共需 ${total} 个分镜，`
+      + `本次只生成第 ${start} 到第 ${end} 个，共 ${want} 个。`
+      + `JSON 数组里只能有这 ${want} 个分镜对象，不多不少，字段结构与上面完全一致。`;
+    if (tailAnchor) {
+      batchPrompt += `\n剧情进度锚点：上一个分镜结束于「${tailAnchor}」，`
+        + '请从紧接其后的剧情继续，不要重复已生成的内容。';
     }
+
+    // 策略同实体抽取：先按 0.7 正常生成（内容需要创作性），解析失败则降温到 0.2 重试一次。
+    let batchArr = null;
+    let lastMsg = '';
+    for (let attempt = 0; attempt < 2 && !batchArr; attempt++) {
+      const p = attempt === 0
+        ? batchPrompt
+        : `${batchPrompt}\n\n【重要】上一次输出无法解析为 JSON（${lastMsg}）。请严格只输出一个 JSON 数组，不要任何解释文字、不要用代码围栏。`;
+      try {
+        const raw = await client.chat(p, {
+          system: PROMPT_JSON_ONLY_SYSTEM,
+          llmType: 'storyboard_split',
+          maxTokens,
+          ...(extra ? { extra } : {}),
+          temperature: attempt === 0 ? 0.7 : 0.2,
+        });
+        const v = parseJsonLax(raw || '');
+        const arr = Array.isArray(v) ? v : (v?.shots || v?.storyboard || v?.frames || []);
+        if (Array.isArray(arr) && arr.length) batchArr = arr;
+        else lastMsg = 'AI 未返回分镜数组';
+      } catch (e) {
+        lastMsg = e?.message || String(e);
+      }
+    }
+
+    if (!batchArr) {
+      // 第一批就失败 → 整体失败；否则保留已有成果，不把前面几批一起赔进去
+      if (!collected.length) throw new Error(`分镜解析失败：${lastMsg}`);
+      onLog?.(`第 ${start}-${end} 个分镜生成失败（${lastMsg}），保留已生成的 ${collected.length} 个`);
+      break;
+    }
+
+    collected.push(...batchArr);
+    const last = batchArr[batchArr.length - 1] || {};
+    tailAnchor = String(
+      last.action || last.sceneDesc || last.description || last.dialogue || '',
+    ).slice(0, 60);
+    if (total > SHOT_BATCH_SIZE) onLog?.(`已生成 ${collected.length}/${total} 个分镜…`);
+    // 模型自行收尾（剧本讲完）就停，不必硬凑条数
+    if (batchArr.length < want) break;
   }
-  if (!parsed) throw new Error(`分镜解析失败：${lastMsg}`);
-  const list = Array.isArray(parsed)
-    ? parsed
-    : (parsed.shots || parsed.storyboard || parsed.frames || []);
+
+  if (!collected.length) throw new Error('AI 未返回有效的分镜数据，请重试');
+  const list = collected;
 
   const stamp = Date.now();
   const shots = (list || []).map((s, i) => ({
