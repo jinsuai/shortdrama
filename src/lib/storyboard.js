@@ -27,12 +27,49 @@ export const DEFAULT_SHOT_COUNT = 12;
  * 单次 LLM 调用最多生成几个分镜（分片生成，根治输出截断）。
  *
  * 🔴 为什么必须分片：每个分镜要吐 imagePrompt + firstFramePrompt(六段) +
- *    videoPrompt(五段) + continuity(四字段) 四大段，12 个分镜一次性输出轻松上万字，
- *    必然撞上模型自身的输出上限——很多服务端会把 max_tokens 硬性夹到 4096/8192，
- *    我们请求 16000 也没用，结果就是 JSON 被截断、只抢救出第 1 个分镜。
- *    每批 3 个可把单批输出量压到约 1/4，即使被夹也能完整拿到；某批失败只损失该批。
+ *    videoPrompt(五段) + continuity(四字段) 四大段，单镜就能写上千字。
+ *    客户端请求 max_tokens=16000 也没用——**很多服务端会硬性夹到 4096/2048 甚至更低**，
+ *    JSON 被掐断后 `parseJsonLax` 只能抢救出第 1 个对象，表象就是「只生成 1 个分镜」。
+ * 实测每批 3 个仍会被夹断，故定为 **1**：一次只吐一个分镜，输出量最小，最不可能撞上限。
+ * 代价是调用次数变多（12 镜 = 12 次），但正确性优先；想提速可自行调大这个常量。
  */
-export const SHOT_BATCH_SIZE = 3;
+export const SHOT_BATCH_SIZE = 1;
+
+/**
+ * 单镜输出体量的三级降级策略（服务端上限未知，只能靠逐轮压缩输出量去适配）。
+ * 每级同时给出字数预算与温度：标准 → 精简 → 极简（极简连 continuity 都不要）。
+ */
+const SHOT_OUTPUT_LEVELS = [
+  { name: '标准', budget: 600, temperature: 0.7, dropContinuity: false },
+  { name: '精简', budget: 350, temperature: 0.2, dropContinuity: false },
+  { name: '极简', budget: 200, temperature: 0.2, dropContinuity: true },
+];
+
+/** 去掉模型可能加的 ```json 代码围栏 */
+function stripCodeFence(s) {
+  let t = String(s || '').trim();
+  const m = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return m ? m[1].trim() : t;
+}
+
+/**
+ * 判断是否被长度限制截断：话没说完就被掐断 → 尾部没有闭合符号。
+ * 🔴 这是根治「只出 1 个分镜」的关键检测：截断产生的残缺数组也能被 parseJsonLax
+ *    抢救出第一个对象，若不识别出来当成成功结果收下，就又退回到「只生成 1 个」。
+ */
+function shotOutputTruncated(raw) {
+  const t = stripCodeFence(raw);
+  if (!t) return true;
+  // 🔴 按「顶层容器」判断闭合：以 [ 开头就必须收尾 ]，以 { 开头就必须收尾 }。
+  //    只看最后一个 } 会把 `[{"a":1},{"a":2}` 这种「对象闭合了但数组没闭合」误判成完整。
+  const need = t[0] === '[' ? ']' : '}';
+  const idx = t.lastIndexOf(need);
+  if (idx < 0) return true;                                  // 该有的闭合符没有 = 话没说完
+  const tail = t.slice(idx + 1).trim();
+  if (!tail) return false;                                   // 干净闭合 = 完整
+  if (/^[,，;；:：、.。]+$/.test(tail)) return true;          // 只吐出半个分隔符就断了
+  return false;                                              // 后面是多余的文字尾巴，结构已完整
+}
 
 /**
  * 分析剧本 → 分镜数组。
@@ -78,63 +115,91 @@ export async function analyzeStoryboard({ script, style = '', characters = [], s
   //    见 SHOT_BATCH_SIZE 注释——这是根治「只生成 1 个分镜」的关键，光抬高 max_tokens 没用。
   const total = Math.max(1, Number(count) || DEFAULT_SHOT_COUNT);
   const collected = [];
-  let tailAnchor = '';
+  const failed = [];
 
   for (let start = 1; start <= total; start += SHOT_BATCH_SIZE) {
     const want = Math.min(SHOT_BATCH_SIZE, total - start + 1);
     const end = start + want - 1;
+    const label = want > 1 ? `第 ${start}-${end} 个` : `第 ${start} 个`;
+
+    // 进度摘要：把最近已完成的分镜列出来，让模型知道剧情走到哪，续写才不会重复或断档
+    const recent = collected.slice(-6);
+    const offset = collected.length - recent.length;
+    const digest = recent.map((s, i) => {
+      const a = String(s.action || s.sceneDesc || s.description || s.dialogue || '').slice(0, 28);
+      return `${offset + i + 1}. ${a}`;
+    }).join('\n');
 
     // ⚠️ 模板里其实没有 {{count}} 占位（那处 replace 是空转），数量必须显式写进指令，
     //    否则模型想生成几个就几个。
-    let batchPrompt = `${prompt}\n\n🔴 数量要求（最重要）：整篇共需 ${total} 个分镜，`
-      + `本次只生成第 ${start} 到第 ${end} 个，共 ${want} 个。`
-      + `JSON 数组里只能有这 ${want} 个分镜对象，不多不少，字段结构与上面完全一致。`;
-    if (tailAnchor) {
-      batchPrompt += `\n剧情进度锚点：上一个分镜结束于「${tailAnchor}」，`
-        + '请从紧接其后的剧情继续，不要重复已生成的内容。';
-    }
-
-    // 策略同实体抽取：先按 0.7 正常生成（内容需要创作性），解析失败则降温到 0.2 重试一次。
     let batchArr = null;
     let lastMsg = '';
-    for (let attempt = 0; attempt < 2 && !batchArr; attempt++) {
-      const p = attempt === 0
-        ? batchPrompt
-        : `${batchPrompt}\n\n【重要】上一次输出无法解析为 JSON（${lastMsg}）。请严格只输出一个 JSON 数组，不要任何解释文字、不要用代码围栏。`;
+
+    for (let lvIdx = 0; lvIdx < SHOT_OUTPUT_LEVELS.length && !batchArr; lvIdx++) {
+      const lv = SHOT_OUTPUT_LEVELS[lvIdx];
+      const per = Math.round(lv.budget * 0.3);
+      let p = `${prompt}\n\n🔴 数量要求（最重要）：整篇共需 ${total} 个分镜，`
+        + `本次只生成${label}，共 ${want} 个。`
+        + `JSON 数组里只能有这 ${want} 个分镜对象，不多不少，字段结构与上面完全一致。`
+        + `\n🔴 输出体量（硬性）：这 ${want} 个分镜的全部字段合计控制在 ${lv.budget} 字以内，`
+        + `其中 imagePrompt ≤ ${per} 字、firstFramePrompt ≤ ${per} 字、videoPrompt ≤ ${per} 字。`
+        + '宁可短，不能长——超出会被服务端截断，整个分镜作废。';
+      if (lv.dropContinuity) p += '\n🔴 本轮省略 continuity 字段（不要输出该键）。';
+      if (digest) {
+        p += `\n\n已完成的分镜进度（不要重复，从紧接其后的剧情继续）：\n${digest}`;
+      }
+      if (lvIdx > 0) {
+        p += `\n\n【重要】上一次输出被长度限制截断（${lastMsg}）。`
+          + '这次请严格按上面的字数上限精简，只输出一个 JSON 数组，'
+          + '不要任何解释文字、不要用代码围栏。';
+      }
+
       try {
         const raw = await client.chat(p, {
           system: PROMPT_JSON_ONLY_SYSTEM,
           llmType: 'storyboard_split',
           maxTokens,
           ...(extra ? { extra } : {}),
-          temperature: attempt === 0 ? 0.7 : 0.2,
+          temperature: lv.temperature,
         });
+        const truncated = shotOutputTruncated(raw);
         const v = parseJsonLax(raw || '');
         const arr = Array.isArray(v) ? v : (v?.shots || v?.storyboard || v?.frames || []);
-        if (Array.isArray(arr) && arr.length) batchArr = arr;
-        else lastMsg = 'AI 未返回分镜数组';
+        const got = Array.isArray(arr) ? arr.length : 0;
+
+        const isLastLevel = lvIdx === SHOT_OUTPUT_LEVELS.length - 1;
+        if (got >= want) {
+          batchArr = arr;                                  // 完整拿到
+        } else if (got > 0 && (!truncated || isLastLevel)) {
+          batchArr = arr;                                  // 模型自行收尾 / 已降到最低级，接受残缺
+        } else {
+          // 🔴 截断产生的残缺数组（抢救出的第 1 个对象）绝不能当成功收下，
+          //    否则就又退回「只生成 1 个分镜」。记录后进入下一级降级重试。
+          lastMsg = `收到 ${String(raw || '').length} 字符，只解析出 ${got}/${want} 个`;
+          onLog?.(`${label}分镜（${lv.name}模式）${truncated ? '被截断' : '未返回完整数据'}：${lastMsg}，自动降级重试…`);
+        }
       } catch (e) {
         lastMsg = e?.message || String(e);
       }
     }
 
     if (!batchArr) {
-      // 第一批就失败 → 整体失败；否则保留已有成果，不把前面几批一起赔进去
-      if (!collected.length) throw new Error(`分镜解析失败：${lastMsg}`);
-      onLog?.(`第 ${start}-${end} 个分镜生成失败（${lastMsg}），保留已生成的 ${collected.length} 个`);
-      break;
+      // 一个都没成 → 整体失败；否则跳过这一个，不把前面成功的成果一起赔进去
+      if (!collected.length && start === 1) throw new Error(`分镜解析失败：${lastMsg}`);
+      failed.push(start);
+      onLog?.(`${label}分镜生成失败（${lastMsg}），跳过；已生成 ${collected.length} 个`);
+      continue;
     }
 
-    collected.push(...batchArr);
-    const last = batchArr[batchArr.length - 1] || {};
-    tailAnchor = String(
-      last.action || last.sceneDesc || last.description || last.dialogue || '',
-    ).slice(0, 60);
+    collected.push(...batchArr.slice(0, want));
     if (total > SHOT_BATCH_SIZE) onLog?.(`已生成 ${collected.length}/${total} 个分镜…`);
     // 模型自行收尾（剧本讲完）就停，不必硬凑条数
     if (batchArr.length < want) break;
   }
 
+  if (failed.length) {
+    onLog?.(`⚠️ 共 ${failed.length} 个分镜未生成成功（第 ${failed.join('、')} 个），可稍后单独重试`);
+  }
   if (!collected.length) throw new Error('AI 未返回有效的分镜数据，请重试');
   const list = collected;
 
