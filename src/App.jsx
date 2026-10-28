@@ -8,6 +8,7 @@ import { PipelineSidebar } from "./components/Pipeline/PipelineSidebar.jsx";
 import { Studio } from "./components/Studio/Studio.jsx";
 import { getAppSetting, saveAppSettings, playNotificationSound, t } from "./utils/app-settings.js";
 import { CustomSettingsDialog } from "./components/CustomSettingsDialog.jsx";
+import { QrContactButton } from "./components/QrContactButton.jsx";
 import { defaultProject, templateProject, cloneProject, packageProject, isPackage, metaOf, PROJECT_TEMPLATES, DRAMA_TYPES, normalizeProject, relTime } from "./utils.js";
 import { saveBlob } from "./utils.js";
 
@@ -577,6 +578,9 @@ export function App() {
         }}
         allAssets={[]}
       />
+
+      {/* 左下角「加微信」悬浮按钮：点开放大二维码，方便扫码 */}
+      <QrContactButton />
 
       {/* ── 账号相关弹窗（必须与 Studio 同级渲染，否则不可达）── */}
     </>

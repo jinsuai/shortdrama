@@ -83,6 +83,16 @@ local-packages/          # 本地依赖包（ui / agnes-client / glm-client）
 
 商业授权咨询：529422804@qq.com
 
+## 反馈与交流
+
+遇到问题、想提意见、想加功能，随时找我：
+
+- 提 [Issue](https://github.com/jinsuai/shortdrama/issues) — 流程清楚，方便追溯；
+- 加微信直接说 — 配置搭不起来、某个模型接不上、界面哪里不好用，
+  直接发截图，比打字描述快得多：
+
+<img src="./docs/wechat-qr.png" width="200" alt="扫码加微信" />
+
 ## 说明
 
 - 界面文案与交互为本项目自有实现。
