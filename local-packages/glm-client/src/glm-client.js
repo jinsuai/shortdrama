@@ -29,7 +29,7 @@ export class DispatchGlmClient {
    */
   async chat(
     prompt,
-    { system = '你是一个专业的写作助手。', model, temperature = 0.8, maxTokens = 2000, onToken = null } = {}
+    { system = '你是一个专业的写作助手。', model, temperature = 0.8, maxTokens = 2000, onToken = null, extra = null } = {}
   ) {
     const cfg = getModelConfig('text');
     if (!cfg.apiKey || !cfg.apiKey.trim()) {
@@ -38,6 +38,7 @@ export class DispatchGlmClient {
     const text = await generateText(this._messages(prompt, system), {
       temperature,
       maxTokens,
+      ...(extra ? { extra } : {}),
     });
     if (onToken) {
       const step = 4; // 模拟流式：按 4 字片段回调，保留打字效果

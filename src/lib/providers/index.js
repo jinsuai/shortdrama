@@ -12,7 +12,7 @@ import { getModelConfig, isModalityConfigured, getResolvedConfig, writeAdapt } f
 import { callChat, callImage, callMedia, callTTS } from './openai.js';
 import { runWorkflow, materializeUrl } from './workflow.js';
 
-export { getModelConfig, saveModelConfig, getAllModelConfig, saveAllModelConfig, isModalityConfigured, MODALITIES, PROVIDER_PRESETS, getResolvedConfig, detectProvider } from './settings.js';
+export { getModelConfig, saveModelConfig, getAllModelConfig, saveAllModelConfig, isModalityConfigured, MODALITIES, PROVIDER_PRESETS, getResolvedConfig, detectProvider, isReasoningModel, reasoningThinkingOffBody } from './settings.js';
 export { callChat, callImage, callMedia, callTTS, deepFindUrl } from './openai.js';
 export {
   listWorkflows, fetchWorkflowRules, getWorkflowRules, runWorkflow,
@@ -80,6 +80,7 @@ export async function generateText(messages, opts = {}) {
     signal: opts.signal,
     authScheme: c.authScheme,
     sendModel: c.sendModel !== false,
+    ...(opts.extra ? { extra: opts.extra } : {}),
   });
 }
 

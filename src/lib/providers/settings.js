@@ -277,6 +277,40 @@ export function saveModelConfig(modality, cfg) {
   return all[modality];
 }
 
+/**
+ * 判断是否「思考型」模型（reasoning model）。
+ *
+ * 🔴 为什么重要：思考模型会把**思考过程的 token 也算进 max_tokens 额度**。
+ *    像分镜这种需要吐一整段大 JSON 的调用，思考把额度吃光后真正的 JSON 被截断，
+ *    解析兜底只能拿到第 1 个完整对象 → 表现就是「只生成了 1 个分镜」。
+ *    因此分镜 / 实体抽取这类大 JSON 调用，遇到思考模型必须大幅抬高 max_tokens，
+ *    并在支持的服务上关闭思考（见 reasoningThinkingOffBody）。
+ *
+ * 靠模型名识别（这是 OpenAI 兼容接口里唯一稳定可拿到的信号）。
+ */
+export function isReasoningModel(model = '') {
+  const m = String(model || '').toLowerCase();
+  if (!m) return false;
+  return /r1\b|reasoner|reasoning|-think\b|thinking|qwq|\bz1\b|o1\b|o3\b|o4\b|deepseek-reasoner|deepseek-r1|glm-.*z[0-9]|qwen.*(qwq|thinking)|doubao.*think|step.*think|hunyuan.*t1|abab.*think/i.test(m);
+}
+
+/**
+ * 给思考模型构造「关闭思考」的请求体片段（仅对已知支持的服务生效，避免误传导致 400）。
+ * 返回 null 表示该模型/平台没有可靠的关闭开关（如 DeepSeek-R1 无法关闭思考，只能靠抬高 token 上限）。
+ *   - 智谱 GLM-Z1 / thinking 系列：chat_template_kwargs.enable_thinking=false
+ *   - 通义 Qwen QwQ / Qwen3-Thinking：enable_thinking=false（写进 extra_body 透传）
+ */
+export function reasoningThinkingOffBody(model = '') {
+  const m = String(model || '').toLowerCase();
+  if (/glm-.*(z[0-9]|thinking|reason)/.test(m)) {
+    return { chat_template_kwargs: { enable_thinking: false } };
+  }
+  if (/qwq|qwen.*thinking/.test(m)) {
+    return { enable_thinking: false };
+  }
+  return null;
+}
+
 export function getAllModelConfig() {
   try {
     return JSON.parse(localStorage.getItem(KEY) || '{}');

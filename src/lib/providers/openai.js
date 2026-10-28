@@ -129,12 +129,12 @@ export function deepFindUrl(obj, depth = 0) {
 }
 
 /** 文本对话：返回助手回复文本 */
-export async function callChat({ baseUrl, apiKey, model, messages, temperature = 0.7, maxTokens = 1200, signal, authScheme } = {}) {
+export async function callChat({ baseUrl, apiKey, model, messages, temperature = 0.7, maxTokens = 1200, signal, authScheme, extra = null } = {}) {
   const url = resolveUrl(baseUrl, '/chat/completions', '/chat/completions');
   const res = await fetch(url, {
     method: 'POST',
     headers: authHeaders(apiKey, authScheme),
-    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
+    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, ...(extra && typeof extra === 'object' ? extra : {}) }),
     signal,
   });
   if (!res.ok) {

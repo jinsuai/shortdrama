@@ -18,6 +18,7 @@ import {
   normalizeEntityName, entityBaseName,
 } from './prompts.js';
 import { generateFlux2MultiRefImage } from './image-workflows.js';
+import { getModelConfig, isReasoningModel, reasoningThinkingOffBody } from './providers/index.js';
 
 /** 分镜默认条数（剧本很长时 AI 会自行增加） */
 export const DEFAULT_SHOT_COUNT = 12;
@@ -51,7 +52,18 @@ export async function analyzeStoryboard({ script, style = '', characters = [], s
 
   onLog?.('正在分析剧本，拆解分镜与生图提示词…');
   const client = new DispatchGlmClient();
-  // 分镜是 token 最大的一次 JSON 调用（6000、嵌套字段多），最容易输出残缺 JSON。
+  // 🔴 思考模型防护：思考模型把「思考 token」也算进 max_tokens 额度，12 个分镜的大 JSON
+  //    会被思考挤掉导致截断（表现就是只解析出第 1 个分镜）。故：
+  //      ① 思考模型把上限抬到 16000（非思考也抬到 12000，6000 对 12 个嵌套分镜本来就偏紧）；
+  //      ② 在支持的服务上（GLM-Z1 / Qwen-QwQ 等）关掉思考，省出全部额度给 JSON。
+  const textModel = getModelConfig('text')?.model || '';
+  const reasoning = isReasoningModel(textModel);
+  const extra = reasoning ? reasoningThinkingOffBody(textModel) : null;
+  const maxTokens = reasoning ? 16000 : 12000;
+  if (reasoning) {
+    onLog?.(`检测到思考模型（${textModel}）：已抬高 token 上限并尽量关闭思考，避免分镜 JSON 被截断`);
+  }
+  // 分镜是 token 最大的一次 JSON 调用（嵌套字段多），最容易输出残缺 JSON。
   // 策略同实体抽取：先按 0.7 正常生成（内容需要创作性），解析失败则降温到 0.2 重试一次并强调格式。
   let parsed = null;
   let lastMsg = '';
@@ -63,7 +75,8 @@ export async function analyzeStoryboard({ script, style = '', characters = [], s
       const raw = await client.chat(p, {
         system: PROMPT_JSON_ONLY_SYSTEM,
         llmType: 'storyboard_split',
-        maxTokens: 6000,
+        maxTokens,
+        ...(extra ? { extra } : {}),
         temperature: attempt === 0 ? 0.7 : 0.2,
       });
       parsed = parseJsonLax(raw || '');
