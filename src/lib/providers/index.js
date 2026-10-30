@@ -8,11 +8,11 @@
 //   generateMusic → { resultUrl }
 //   generateText  → 字符串
 
-import { getModelConfig, isModalityConfigured, getResolvedConfig, writeAdapt } from './settings.js';
+import { getModelConfig, isModalityConfigured, getResolvedConfig, writeAdapt, supportsThinkingToggle, reasoningThinkingOffBody } from './settings.js';
 import { callChat, callImage, callMedia, callTTS } from './openai.js';
 import { runWorkflow, materializeUrl } from './workflow.js';
 
-export { getModelConfig, saveModelConfig, getAllModelConfig, saveAllModelConfig, isModalityConfigured, MODALITIES, PROVIDER_PRESETS, getResolvedConfig, detectProvider, isReasoningModel, reasoningThinkingOffBody } from './settings.js';
+export { getModelConfig, saveModelConfig, getAllModelConfig, saveAllModelConfig, isModalityConfigured, MODALITIES, PROVIDER_PRESETS, getResolvedConfig, detectProvider, isReasoningModel, reasoningThinkingOffBody, supportsThinkingToggle } from './settings.js';
 export { callChat, callImage, callMedia, callTTS, deepFindUrl } from './openai.js';
 export {
   listWorkflows, fetchWorkflowRules, getWorkflowRules, runWorkflow,
@@ -70,6 +70,13 @@ async function generateViaWorkflow(modality, c, std, { onProgress, signal, timeo
 /** 文本生成（兼容旧 DispatchGlmClient.chat 的 messages 入参） */
 export async function generateText(messages, opts = {}) {
   const c = requireConfig('text');
+  // 思考模式开关：统一在此生效，所有文本链路（分镜 / 实体抽取 / 提示词润色）自动继承。
+  // 用户关闭（useThinking===false）且模型支持开关时，注入关闭思考的请求体片段；
+  // 调用方若已显式传了 extra（极少），以调用方为准。
+  let extra = opts.extra ?? null;
+  if (extra === null && c.useThinking === false && supportsThinkingToggle(c.model)) {
+    extra = reasoningThinkingOffBody(c.model);
+  }
   return callChat({
     baseUrl: c.baseUrl,
     apiKey: c.apiKey,
@@ -80,7 +87,7 @@ export async function generateText(messages, opts = {}) {
     signal: opts.signal,
     authScheme: c.authScheme,
     sendModel: c.sendModel !== false,
-    ...(opts.extra ? { extra: opts.extra } : {}),
+    ...(extra ? { extra } : {}),
   });
 }
 

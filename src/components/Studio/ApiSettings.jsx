@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Icon, Btn, Pill } from './ui';
 import {
   MODALITIES, PROVIDER_PRESETS, getAllModelConfig, saveAllModelConfig, detectProvider,
+  supportsThinkingToggle,
   listWorkflows, getWorkflowRules, describeRules, DEFAULT_WORKFLOW_PATHS,
 } from '../../lib/providers/index.js';
 
@@ -52,6 +53,7 @@ const FIELD_HELP = {
   sendNegative: '图片请求是否带上 negative_prompt（负向词）。默认勾选，使用内置通用负向词（糊、畸形、水印等）。若你的服务对未知字段做严格校验、带负向词就报错，取消勾选即可，请求体里将不再出现该字段。',
   imageField: '图生图时「参考图」放在哪个字段名下。留空即可：软件会按 image_url → image → init_image → … 自动试，试通后记住，下次直接用。只有确认自己的服务用别的名字时才填。',
   imageFieldArray: '强制把参考图按数组发送。默认关闭（单图发字符串、多图发数组）；若服务报类型错误，软件会自动切成数组并记住，一般不用手动勾。',
+  useThinking: '思考模式开关（仅对可自由开关思考的模型显示，如智谱 GLM-Z/thinking、通义 Qwen QwQ/Qwen3-Thinking）。默认勾选=使用思考能力（质量更好）；取消勾选=关闭思考，可明显提速、省 token。DeepSeek-R1、OpenAI o1/o3/o4 等思考强制无法关闭，不显示此开关。关掉思考后，分镜 / 实体抽取这类大 JSON 调用更不容易被截断。',
   workflowExtra: '自动映射认不出来的字段（如随机种子 seed、情感权重 emo_*）在这里手填，JSON 格式。填了就以这里为准，会覆盖自动推断出来的同名参数。',
   wfPaths: '四项分别是「拉取列表 / 读取参数 / 提交任务 / 查询结果」的接口路径，{id} 代表工作流 id、{task} 代表任务 id。默认已按 AutoDL 实测路径填好，接别的平台（RunningHub、自建 ComfyUI-on-API）时按它的文档改这里即可。',
   kind: '接入类型默认按 Base URL 自动识别：填 AutoDL 的地址会自动切到「工作流型」。若你用的是同类但没被认出来的平台，在这里手动选「工作流型」即可。',
@@ -230,6 +232,9 @@ export function ApiSettings() {
         // 图片：是否随请求提交 negative_prompt。默认开启（缺失该键亦视为开启），
         // 严格校验未知字段的服务可取消勾选。
         sendNegative: all[m]?.sendNegative !== false,
+        // 思考模式开关：默认开启（使用模型原生思考能力）；可关闭以提速 / 省 token。
+        // 仅对「可自由开关思考」的模型有意义，UI 会在高级里按需显示。
+        useThinking: all[m]?.useThinking !== false,
       };
     });
     return init;
@@ -420,6 +425,22 @@ export function ApiSettings() {
                   marginTop: 10, padding: 12, borderRadius: 8,
                   background: 'rgba(15,23,42,0.028)', border: '1px dashed rgba(15,23,42,0.16)',
                 }}>
+                  {/* 思考模式开关：仅对可自由开关思考的模型显示（如 GLM-Z / Qwen-QwQ）。
+                      非思考模型、或思考强制关不掉的（DeepSeek-R1 / o1/o3/o4）不显示。 */}
+                  {supportsThinkingToggle(c.model) && (
+                    <div style={{ marginBottom: showEndpoint ? 12 : 0 }}>
+                      <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={c.useThinking !== false}
+                          onChange={(e) => setField(m, 'useThinking', e.target.checked)}
+                          style={{ cursor: 'pointer', margin: 0 }}
+                        />
+                        使用思考模式（思考型模型可关闭以提速 / 省 token）
+                      </label>
+                      <HelpHint>{FIELD_HELP.useThinking}</HelpHint>
+                    </div>
+                  )}
                   {/* endpoint（仅视频 / 音乐等非标准模态） */}
                   {showEndpoint && (
                     <div style={{ marginBottom: 12 }}>

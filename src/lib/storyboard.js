@@ -18,7 +18,7 @@ import {
   normalizeEntityName, entityBaseName,
 } from './prompts.js';
 import { generateFlux2MultiRefImage } from './image-workflows.js';
-import { getModelConfig, isReasoningModel, reasoningThinkingOffBody } from './providers/index.js';
+import { getResolvedConfig, isReasoningModel } from './providers/index.js';
 
 /** 分镜默认条数（剧本很长时 AI 会自行增加） */
 export const DEFAULT_SHOT_COUNT = 12;
@@ -100,15 +100,19 @@ export async function analyzeStoryboard({ script, style = '', characters = [], s
 
   onLog?.('正在分析剧本，拆解分镜与生图提示词…');
   const client = new DispatchGlmClient();
-  // 🔴 思考模型防护（保留）：思考模型把「思考 token」也算进 max_tokens 额度，会挤占 JSON 空间。
-  //      ① 思考模型把上限抬到 16000（非思考 12000）；
-  //      ② 在支持的服务上（GLM-Z1 / Qwen-QwQ 等）关掉思考，省出全部额度给 JSON。
-  const textModel = getModelConfig('text')?.model || '';
+  // 🔴 思考模型防护：思考模型把「思考 token」也算进 max_tokens 额度，会挤占 JSON 空间。
+  //    ① 思考模型把上限抬到 16000（非思考 12000），给思考 / 输出都留出空间；
+  //    ② 是否「关闭思考」改由用户在「设置 → 高级 → 使用思考模式」决定（默认开）。
+  //       开关在 generateText 里统一生效（useThinking===false 时注入关闭思考体），
+  //       这里不再硬编码关闭——尊重用户选择，同时靠分片 + 三级降级 + 截断检测兜底防截断。
+  const textCfg = getResolvedConfig('text');
+  const textModel = textCfg.model || '';
   const reasoning = isReasoningModel(textModel);
-  const extra = reasoning ? reasoningThinkingOffBody(textModel) : null;
   const maxTokens = reasoning ? 16000 : 12000;
   if (reasoning) {
-    onLog?.(`检测到思考模型（${textModel}）：已抬高 token 上限并尽量关闭思考，避免分镜 JSON 被截断`);
+    onLog?.(textCfg.useThinking === false
+      ? `检测到思考模型（${textModel}）：已按设置关闭思考，避免分镜 JSON 被截断`
+      : `检测到思考模型（${textModel}）：思考模式开，已抬升 token 上限并分片生成以防截断`);
   }
 
   // 🔴 分片生成：一次只让模型吐 SHOT_BATCH_SIZE 个分镜，多批拼接成完整分镜表。
@@ -159,7 +163,6 @@ export async function analyzeStoryboard({ script, style = '', characters = [], s
           system: PROMPT_JSON_ONLY_SYSTEM,
           llmType: 'storyboard_split',
           maxTokens,
-          ...(extra ? { extra } : {}),
           temperature: lv.temperature,
         });
         const truncated = shotOutputTruncated(raw);

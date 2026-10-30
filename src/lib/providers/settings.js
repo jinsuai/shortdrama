@@ -223,6 +223,10 @@ export function getResolvedConfig(modality) {
     // 参考图字段名：用户指定 > 自愈记忆 > 空（调用方按候选列表自动试）
     imageField: saved.imageField || adapt.imageField || '',
     imageFieldArray: saved.imageFieldArray ?? adapt.imageFieldArray ?? false,
+    // 思考模式开关：仅对「可自由开关思考」的模型有意义（见 supportsThinkingToggle）。
+    // 默认开启（使用模型原生思考能力，符合 GLM-Z / Qwen-QwQ 等的设计意图）；
+    // 用户可在「高级」里关闭以提速 / 省 token，关闭时注入 reasoningThinkingOffBody。
+    useThinking: saved.useThinking ?? true,
     // 负向词：默认发，若服务不认会被自愈机制自动关掉并记住
     sendNegative: saved.sendNegative ?? adapt.sendNegative ?? true,
     videoSendNegative: saved.videoSendNegative ?? adapt.videoSendNegative ?? true,
@@ -309,6 +313,23 @@ export function reasoningThinkingOffBody(model = '') {
     return { enable_thinking: false };
   }
   return null;
+}
+
+/**
+ * 该模型是否「可自由开关思考模式」。
+ *
+ * 只认「有可靠关闭开关」的模型——目前是智谱 GLM-Z / thinking 系列、通义 Qwen QwQ /
+ * Qwen3-Thinking（reasoningThinkingOffBody 能给出有效的关闭请求体片段）。
+ *
+ * 反例（思考强制、关不掉，故不暴露开关，免得用户以为能关）：
+ *   - DeepSeek-R1 / reasoner：思考无法关闭，只能靠抬高 max_tokens；
+ *   - OpenAI o1 / o3 / o4：推理强度可调（reasoning_effort）但无法彻底关掉思考；
+ *   - doubao think / step think / hunyuan t1 / abab think：本软件无对应关闭开关。
+ *
+ * UI 据此决定是否在「高级」里显示「使用思考模式」开关；生成链路据此决定是否注入关闭体。
+ */
+export function supportsThinkingToggle(model = '') {
+  return reasoningThinkingOffBody(model) !== null;
 }
 
 export function getAllModelConfig() {
