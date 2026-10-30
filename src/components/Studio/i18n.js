@@ -312,7 +312,7 @@ export const T = {
     shotType: '镜头类型',
     single: '单镜头',
     multi: '多镜头叙事',
-    multiDesc: '多镜头模式会生成包含多个切换镜头的叙事视频',
+    multiDesc: '多镜头叙事：向模型提示词注入「单条视频内做自然机位 / 景别切换、多视角叙事」的指令，避免全程单一机位（最终是否多镜取决于视频模型）',
     quality: '画质规格',
     resolution: '画质',
     ratio: '画幅比例',

@@ -15,6 +15,18 @@ import { characterFourView } from '../../utils.js';
 const P = { padding: '18px 22px' };
 
 /* ══════════════ 步骤 4：分镜 ══════════════ */
+// 多镜头叙事指令：镜头类型选「多镜头叙事」时注入到视频提交提示词末尾
+export const MULTI_SHOT_INSTRUCTION =
+  '【镜头类型：多镜头叙事】请在单条视频内运用镜头语言进行自然的机位切换与景别变化' +
+  '（如特写↔中景↔全景的衔接、轻微推 / 拉 / 摇 / 移），围绕同一主体与场景展开多视角叙事，' +
+  '避免全程固定单一机位；镜头衔接需连贯、不跳帧。';
+
+// 根据镜头类型构造最终提交提示词：多镜头叙事时追加多镜头指令，单镜头原样返回
+export function buildSubmitPrompt(base, multi) {
+  const b = String(base || '').trim();
+  return multi ? `${b}\n\n${MULTI_SHOT_INSTRUCTION}` : b;
+}
+
 export function StoryboardStep({ project, update, log }) {
   const shots = project?.shots || [];
   const chars = project?.materials?.characters || [];
@@ -581,7 +593,7 @@ export function MotionStep({ project, update, log }) {
   };
 
   /** 生成单个分镜并回写到该镜 */
-  const genOne = async (idx, k, total, onProgress) => {
+  const genOne = async (idx, k, total, onProgress, jobId) => {
     const sh = shots[idx] || {};
     setProgress(T.motion.batchRunning(k + 1, total));
     log?.(`正在生成第 ${idx + 1} 镜 · ${wf}`);
@@ -652,6 +664,10 @@ export function MotionStep({ project, update, log }) {
       }
     }
 
+    // 镜头类型：多镜头叙事 → 由 project.motion.shotType 决定（与右侧「镜头类型」控件实时同步）。
+    // 选「多镜头叙事」时向提示词追加多镜头指令；单镜头（默认）保持原提示词不变。
+    finalPrompt = buildSubmitPrompt(finalPrompt, m.shotType === 'multi');
+
     // 把「这一镜到底提交了什么」写进日志：用户能直接跟分镜里显示的提示词对上，
     // 不用猜是本页覆盖、还是润色改写、还是分镜本身为空。
     {
@@ -662,6 +678,11 @@ export function MotionStep({ project, update, log }) {
       log?.(`第 ${idx + 1} 镜提示词来源：${src}${polished ? ' → 已润色改写' : ''}`);
       const shown = finalPrompt.length > 240 ? `${finalPrompt.slice(0, 240)}…` : finalPrompt;
       log?.(`第 ${idx + 1} 镜提交提示词：${shown || '（空）'}`);
+    }
+
+    // 把最终提交提示词记进生成队列，便于在右侧「队列」页按镜查看（含多镜头叙事指令）
+    if (jobId) {
+      patchJobs((jobs) => jobs.map((j) => (j.id === jobId ? { ...j, prompt: finalPrompt } : j)));
     }
 
     const audio = await resolveAudio(idx);
@@ -776,7 +797,7 @@ export function MotionStep({ project, update, log }) {
           }
         };
         try {
-          const url = await genOne(list[k], k, list.length, onProgress);
+          const url = await genOne(list[k], k, list.length, onProgress, jobId);
           ok += 1;
           patchJobs((jobs) => jobs.map((j) => (j.id === jobId
             ? { ...j, status: 'done', progress: '已完成', url: url || '', endedAt: Date.now() }
@@ -898,6 +919,47 @@ export function MotionStep({ project, update, log }) {
               (targets.length || 1) > 1 ? `（当前 ${targets.length} 个分镜会共用这一条）` : ''}；清空本框才会用分镜原文。 </>
             : <>留空时使用各分镜自己的「视频运动提示词」。 </>}
           {polishOn && <>「{T.motion.polish}」已开启，提交给模型的是<b>润色改写后</b>的提示词。</>}
+        </div>
+
+        {/* 提交预览：生成前即可看到将要发给模型的最终提示词（含多镜头叙事指令） */}
+        <div style={{ marginBottom: 14, padding: '10px 11px', borderRadius: 8, background: 'rgba(109,40,217,.06)', border: '1px solid rgba(109,28,217,.22)' }}>
+          <div style={{ fontSize: 10.5, fontWeight: 600, color: '#6d28d9', marginBottom: 6 }}>
+            提交预览（最终发给模型的提示词）
+          </div>
+          {(() => {
+            const multi = m.shotType === 'multi';
+            const promptNonEmpty = !!String(prompt || '').trim();
+            if (promptNonEmpty) {
+              return (
+                <div style={{ fontSize: 10.5, lineHeight: 1.6, color: '#374151', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 180, overflowY: 'auto' }}>
+                  {buildSubmitPrompt(prompt, multi)}
+                </div>
+              );
+            }
+            const previewTargets = targets.length ? targets : [0];
+            const shownTargets = previewTargets.slice(0, 3);
+            return (
+              <div style={{ fontSize: 10.5, lineHeight: 1.6, color: '#374151' }}>
+                <div style={{ color: '#5b6678', marginBottom: 4 }}>
+                  本框为空 → 将使用各分镜自己的「视频运动提示词」{previewTargets.length > 1 ? `（共 ${previewTargets.length} 个目标分镜，预览前 3 个）` : ''}：
+                </div>
+                {shownTargets.map((i) => (
+                  <div key={i} style={{ marginBottom: 6, padding: '6px 8px', borderRadius: 6, background: 'rgba(15,23,42,.04)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    <span style={{ color: '#6d28d9', fontWeight: 600 }}>第 {i + 1} 镜：</span>
+                    {buildSubmitPrompt(shotPrompt(i) || '（空）', multi)}
+                  </div>
+                ))}
+                {previewTargets.length > 3 && (
+                  <div style={{ color: '#5b6678' }}>…其余 {previewTargets.length - 3} 个分镜同此规则（多镜头模式下每镜追加多镜头指令）</div>
+                )}
+              </div>
+            );
+          })()}
+          {polishOn && (
+            <div style={{ fontSize: 10, color: '#6d28d9', marginTop: 6 }}>
+              注：「润色」开启时，提交前会由模型改写为润色版本（以上为改写前原文）。
+            </div>
+          )}
         </div>
 
         {!!progress && (
@@ -1281,7 +1343,7 @@ export function MotionContext({ project, update }) {
   const ratio = saved.ratio || defaultRatio('video');
   const dur = saved.duration || 5;
   const negative = saved.negative || '';
-  // 🔴 镜头类型之前是本地 state 纯摆设：不落 project.motion、提交时也没用。现在持久化并参与润色
+  // 镜头类型：单镜头 / 多镜头叙事。持久化到 project.motion，并在视频提交提示词中注入「多镜头叙事」指令（见 genOne）。
   const [shotType, setShotType] = useState(saved.shotType || 'single');
   const [res, setRes] = useState('720p');
   const [batch, setBatch] = useState('1x');
@@ -1437,6 +1499,11 @@ export function MotionContext({ project, update }) {
                       {j.url && (
                         <video src={j.url} muted playsInline
                           style={{ width: '100%', height: 64, objectFit: 'cover', borderRadius: 5, marginTop: 6, background: '#000' }} />
+                      )}
+                      {j.prompt && (
+                        <div style={{ fontSize: 9.5, color: '#5b6678', marginTop: 5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 132, overflowY: 'auto' }}>
+                          {j.prompt}
+                        </div>
                       )}
                     </div>
                   );
