@@ -25,6 +25,7 @@ export interface VideoNodeData {
 }
 
 export interface GenerateNodeData {
+  prompt?: string;
   generateType: GenerateType;
   model: string;
   params: {

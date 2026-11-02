@@ -178,6 +178,18 @@ export function GenerateNode({ id, data, selected }: NodeProps) {
       </div>
       <div style={bodyStyle}>
         <div style={{ marginBottom: '8px' }}>
+          <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>提示词</div>
+          <textarea
+            value={genData.prompt || ''}
+            onChange={(e) => updateNodeData(id, { prompt: e.target.value, status: 'idle' })}
+            placeholder="输入提示词…"
+            style={{
+              width: '100%', minHeight: '48px', background: '#f5f7fb', border: '1px solid #dde4f0',
+              borderRadius: '4px', padding: '6px', color: '#333', fontSize: '11px', resize: 'vertical', fontFamily: 'inherit',
+            }}
+          />
+        </div>
+        <div style={{ marginBottom: '8px' }}>
           <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>生成类型</div>
           <select
             value={genData.generateType}

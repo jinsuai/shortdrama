@@ -11,6 +11,7 @@ import { generatePanelImage } from '../../lib/image-workflows.js';
 import { ScriptStep, ScriptContext, ArtDirectionStep, ArtContext, AssetsStep, AssetsContext } from './steps1';
 import { StoryboardStep, StoryboardContext, MotionStep, MotionContext, AssemblyStep, AssemblyContext } from './steps2';
 import { VoiceStep, VoiceContext, FinalMixStep, MixContext, ExportStep, ExportContext } from './steps3';
+import { InfiniteCanvas } from '../InfiniteCanvas';
 // 弹窗
 import {
   EntityModal, WorkbenchModal, CreateSeriesModal, CreateProjectModal, ImportFileModal,
@@ -282,6 +283,7 @@ export function Studio({
         />
       )}
       {view === 'library' && <LibraryView assets={allAssets} />}
+      {view === 'canvas' && <InfiniteCanvas style={{ position: 'absolute', inset: 0 }} />}
       {view === 'settings' && (
         <SettingsView
           onSave={(s) => { onSaveSettings?.(s); log?.('设置已保存'); }}
