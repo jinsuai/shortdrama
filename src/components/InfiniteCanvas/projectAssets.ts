@@ -13,10 +13,13 @@ import { characterFourView } from '../../utils.js';
 
 export type CanvasAsset = {
   id: string;
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'prompt';
   url: string;
   title: string;
-  group: string; // 角色 / 场景 / 道具 / 分镜 / 素材库
+  group: string; // 角色 / 场景 / 道具 / 分镜 / 首帧提示词 / 视频提示词 / 素材库
+  /** 仅 prompt 类型有：提示词正文 + 来源分类（首帧 / 视频 / 生图） */
+  promptText?: string;
+  promptKind?: 'firstFrame' | 'video' | 'image';
 };
 
 const isVideoUrl = (u: string) => /\.(mp4|webm|mov|m3u8|mkv)(\?|#|$)/i.test(u || '');
@@ -28,9 +31,35 @@ export function collectProjectAssets(project: any): CanvasAsset[] {
 
   const push = (
     url: string | undefined,
-    opts: { id?: string; type?: 'image' | 'video'; title?: string; group: string }
+    opts: {
+      id?: string;
+      type?: 'image' | 'video';
+      title?: string;
+      group: string;
+      /** 传了 promptText 就按提示词条目登记（与图/视频走不同分支、分开去重） */
+      promptText?: string;
+      promptKind?: 'firstFrame' | 'video' | 'image';
+    }
   ) => {
     const u = (url || '').trim();
+    // prompt 分支：提示词文本与图/视频分开去重、分开登记
+    if (opts.promptText !== undefined) {
+      const ptext = (opts.promptText || '').trim();
+      if (!ptext) return;
+      const key = 'prompt::' + ptext;
+      if (seen.has(key)) return;
+      seen.add(key);
+      list.push({
+        id: opts.id || `${opts.group}_${list.length}`,
+        type: 'prompt',
+        url: '',
+        title: opts.title || opts.group,
+        group: opts.group,
+        promptText: ptext,
+        promptKind: opts.promptKind,
+      });
+      return;
+    }
     if (!u || seen.has(u)) return;
     seen.add(u);
     list.push({
@@ -80,9 +109,25 @@ export function collectProjectAssets(project: any): CanvasAsset[] {
     });
   });
 
-  // 5) 分镜（首帧图 + 已生成的视频）
+  // 5) 分镜（首帧图 + 已生成的视频 + 首帧提示词 + 视频提示词）
+  //    🔴 首帧提示词 / 视频提示词原本散落在 shot.firstFramePrompt / shot.videoPrompt，
+  //       一并收进导入清单，让画布能直接基于分镜提示词生成关键帧 / 视频。
   (project.shots || []).forEach((s: any, i: number) => {
     const label = s?.title || `分镜 ${i + 1}`;
+    push(s?.firstFramePrompt, {
+      id: `shot_ff_${s?.id || i}`,
+      title: `${label} · 首帧提示词`,
+      group: '首帧提示词',
+      promptText: s?.firstFramePrompt,
+      promptKind: 'firstFrame',
+    });
+    push(s?.videoPrompt, {
+      id: `shot_vp_${s?.id || i}`,
+      title: `${label} · 视频提示词`,
+      group: '视频提示词',
+      promptText: s?.videoPrompt,
+      promptKind: 'video',
+    });
     push(s?.imageUrl, { id: `shot_img_${s?.id || i}`, type: 'image', title: `${label} · 首帧`, group: '分镜' });
     push(s?.videoUrl, { id: `shot_vid_${s?.id || i}`, type: 'video', title: `${label} · 视频`, group: '分镜' });
   });

@@ -26,7 +26,7 @@ import {
 } from '../../lib/icons';
 import { useCanvasStore } from './store';
 import { nodeTypes } from './nodes';
-import { NodeType } from './types';
+import { NodeType, MODELS } from './types';
 import { useCanvasBridge } from './bridge';
 
 function CanvasContent() {
@@ -252,7 +252,7 @@ function CanvasContent() {
             }}
             title={
               assetList.length
-                ? `从项目素材导入（${assetList.length} 项）`
+                ? `从项目素材 / 分镜提示词导入（${assetList.length} 项）`
                 : '项目暂无素材，可在面板内改为从本地导入'
             }
           >
@@ -393,7 +393,8 @@ function CanvasContent() {
                     {shownAssets.map((a: any, i: number) => {
                       const url = a?.url || a?.imageUrl || '';
                       const title = a?.title || ('素材 ' + (i + 1));
-                      const isVideo = a?.type === 'video' || /\.(mp4|webm|mov|m3u8|mkv)(\?|#|$)/i.test(url);
+                      const isPrompt = a?.type === 'prompt';
+                      const isVideo = !isPrompt && (a?.type === 'video' || /\.(mp4|webm|mov|m3u8|mkv)(\?|#|$)/i.test(url));
                       return (
                         <button
                           key={a?.id || i}
@@ -414,14 +415,46 @@ function CanvasContent() {
                               height: '70px',
                               borderRadius: '4px',
                               overflow: 'hidden',
-                              background: '#000',
+                              background: isPrompt ? '#fff7e0' : '#000',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
                               position: 'relative',
                             }}
                           >
-                            {url ? (
+                            {isPrompt ? (
+                              <>
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    top: 4,
+                                    left: 4,
+                                    background: '#fee140',
+                                    color: '#333',
+                                    borderRadius: '4px',
+                                    fontSize: '9px',
+                                    padding: '1px 4px',
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  {a?.promptKind === 'video' ? '视频提示词' : '首帧提示词'}
+                                </div>
+                                <div
+                                  style={{
+                                    fontSize: '10px',
+                                    color: '#2b3a5b',
+                                    padding: '6px',
+                                    lineHeight: 1.4,
+                                    overflow: 'hidden',
+                                    maxHeight: '62px',
+                                    textAlign: 'left',
+                                    whiteSpace: 'pre-wrap',
+                                  }}
+                                >
+                                  {(a?.promptText || '').slice(0, 60)}
+                                </div>
+                              </>
+                            ) : url ? (
                               isVideo ? (
                                 <>
                                   <video src={url} muted preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -444,7 +477,7 @@ function CanvasContent() {
                               textOverflow: 'ellipsis',
                             }}
                           >
-                            {isVideo ? '🎬 ' : '🖼 '}
+                            {isPrompt ? '✏️ ' : isVideo ? '🎬 ' : '🖼 '}
                             {title}
                           </div>
                         </button>
