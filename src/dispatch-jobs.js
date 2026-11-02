@@ -84,19 +84,28 @@ export async function img2imgImage({ image_url, prompt, negative_prompt = '', se
  * 轮询路径、任务 id 字段名」不同，这些差异全交给「设置面板配置 + callMedia 通用提取」。
  * 语义层（模式 / 画幅 / 参考图 / 首帧）在此统一归一，做到「换个模型只改配置、不改代码」。
  */
+/** 把 UI 的 resolution 档位字符串（如 "1080p竖" / "768p横(1280*720)"）解析为 aspect_ratio 标准名 */
 function resolutionToRatio(resolution) {
   if (!resolution || typeof resolution !== 'string') return null;
+  // 优先按像素数字解析（老格式如 "1920x1080"）
   const m = resolution.match(/(\d+)\s*[x×]\s*(\d+)/i);
-  if (!m) return null;
-  const w = +m[1], h = +m[2];
-  const r = w / h;
-  const table = [[21 / 9, '21:9'], [16 / 9, '16:9'], [4 / 3, '4:3'], [1, '1:1'], [3 / 4, '3:4'], [9 / 16, '9:16']];
-  let best = '16:9', diff = Infinity;
-  for (const [v, name] of table) {
-    const d = Math.abs(v - r);
-    if (d < diff) { diff = d; best = name; }
+  if (m) {
+    const w = +m[1], h = +m[2];
+    const r = w / h;
+    const table = [[21 / 9, '21:9'], [16 / 9, '16:9'], [4 / 3, '4:3'], [1, '1:1'], [3 / 4, '3:4'], [9 / 16, '9:16']];
+    let best = '16:9', diff = Infinity;
+    for (const [v, name] of table) {
+      const d = Math.abs(v - r);
+      if (d < diff) { diff = d; best = name; }
+    }
+    return best;
   }
-  return best;
+  // 档位字符串：如 "1080p竖" / "768p横(1280*720)" / "1080p(1:1)"
+  const s = resolution.toLowerCase();
+  if (/竖|portrait|vertical/.test(s)) return '9:16';
+  if (/横|landscape|horizontal/.test(s)) return '16:9';
+  if (/方|square|1:1/.test(s)) return '1:1';
+  return null;
 }
 
 /** 收集 payload 中 ref_image_0 / ref_image_1 … 这类带序号的参考资源，按序返回数组 */
