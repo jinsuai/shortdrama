@@ -31,7 +31,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       ),
     }),
 
-  addNode: (type, position) => {
+  addNode: (type, position, initialData) => {
     const id = genId(type);
     const base = { id, position: position || randPos(), data: {} as any };
     let node: any;
@@ -45,7 +45,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         data: { prompt: '', generateType: 'text-to-image', model: '', params: { resolution: '1024x1024' }, status: 'idle' },
       };
     else if (type === 'output') node = { ...base, type: 'outputNode', data: { result: '', resultType: undefined } };
+    // 支持带入初始数据（从素材库/本地文件导入时直接填好 url、label）
+    if (initialData && typeof initialData === 'object') node.data = { ...node.data, ...initialData };
     set({ nodes: [...get().nodes, node] });
+    return id;
   },
 
   removeNode: (id) =>
@@ -146,7 +149,7 @@ export interface CanvasStore {
   onNodesChange: (c: any) => void;
   onEdgesChange: (c: any) => void;
   onConnect: (c: any) => void;
-  addNode: (type: any, position?: any) => void;
+  addNode: (type: any, position?: any, initialData?: any) => string;
   removeNode: (id: string) => void;
   updateNodeData: (id: string, patch: any) => void;
   clearCanvas: () => void;

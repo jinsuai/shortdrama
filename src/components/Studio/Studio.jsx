@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { StudioShell } from './StudioShell';
 import { WorkspaceView } from './WorkspaceView';
 import { SeriesView } from './SeriesView';
@@ -12,6 +12,7 @@ import { ScriptStep, ScriptContext, ArtDirectionStep, ArtContext, AssetsStep, As
 import { StoryboardStep, StoryboardContext, MotionStep, MotionContext, AssemblyStep, AssemblyContext } from './steps2';
 import { VoiceStep, VoiceContext, FinalMixStep, MixContext, ExportStep, ExportContext } from './steps3';
 import { InfiniteCanvas } from '../InfiniteCanvas';
+import { collectProjectAssets } from '../InfiniteCanvas/projectAssets';
 // 弹窗
 import {
   EntityModal, WorkbenchModal, CreateSeriesModal, CreateProjectModal, ImportFileModal,
@@ -51,6 +52,10 @@ export function Studio({
   const [workbench, setWorkbench] = useState(null);
   const [dlg, setDlg] = useState(null);            // 'series' | 'project' | 'import'
   const [generating, setGenerating] = useState(null); // 正在生成的槽位 key
+
+  // 画布可导入的项目素材：角色 / 场景 / 道具 / 分镜首帧与视频 / 素材库，全部汇总。
+  // 只读 project.assets 会漏掉资产步骤里生成的图（那些不在 assets 里），导致画布导入面板空。
+  const canvasAssets = useMemo(() => collectProjectAssets(project), [project]);
 
   /**
    * 资产出图：按「设置里的图片模型 + 槽位任务」自动选面板工作流。
@@ -286,7 +291,8 @@ export function Studio({
       {view === 'canvas' && (
         <InfiniteCanvas
           style={{ position: 'absolute', inset: 0 }}
-          assets={project?.assets || []}
+          assets={canvasAssets}
+          projectTitle={project?.title}
           onSaveAsset={
             project
               ? (asset) => update((p) => ({ ...p, assets: [asset, ...(p.assets || [])] }))

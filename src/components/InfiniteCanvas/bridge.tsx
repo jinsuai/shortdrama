@@ -6,6 +6,7 @@ import { createContext, useContext } from 'react';
 
 export interface CanvasBridge {
   assets?: any[];
+  projectTitle?: string;
   onSaveAsset?: (asset: any) => void;
 }
 

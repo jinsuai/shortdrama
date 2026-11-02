@@ -8,8 +8,10 @@ export interface InfiniteCanvasProps {
   style?: React.CSSProperties;
   onRunNode?: (nodeId: string, data: any) => void;
   onExport?: (data: object) => void;
-  /** 主程序桥接：项目素材库（project.assets），用于「从素材库导入」 */
+  /** 主程序桥接：项目素材（角色/场景/道具/分镜/素材库汇总），用于「从素材库导入」 */
   assets?: any[];
+  /** 主程序桥接：当前项目名（用于导入面板显示来源） */
+  projectTitle?: string;
   /** 主程序桥接：把画布生成结果写回项目素材库（走 project setter 自动存盘） */
   onSaveAsset?: (asset: any) => void;
 }
@@ -43,9 +45,10 @@ export function InfiniteCanvas({
   onRunNode,
   onExport,
   assets,
+  projectTitle,
   onSaveAsset,
 }: InfiniteCanvasProps) {
-  const bridge: CanvasBridge = { assets, onSaveAsset };
+  const bridge: CanvasBridge = { assets, projectTitle, onSaveAsset };
   return (
     <div
       className={className}

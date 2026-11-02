@@ -44,23 +44,50 @@ function CanvasContent() {
     importWorkflow,
   } = useCanvasStore();
 
-  const { assets } = useCanvasBridge();
+  const { assets, projectTitle } = useCanvasBridge();
   const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showAssetPicker, setShowAssetPicker] = useState(false);
+  const [assetGroup, setAssetGroup] = useState<string>('全部');
 
-  // 从项目素材库导入：把图/视频生成为对应节点
-  const importAssetAsNode = (asset: any) => {
-    const isVideo = asset?.type === 'video' || /\.(mp4|webm|mov|m3u8)(\?|$)/i.test(asset?.url || asset?.imageUrl || '');
+  const assetList = assets || [];
+  const assetGroups = Array.from(new Set(assetList.map((a: any) => a?.group || '素材')));
+  const activeGroup = assetGroup !== '全部' && assetGroups.includes(assetGroup) ? assetGroup : '全部';
+  const shownAssets = activeGroup === '全部'
+    ? assetList
+    : assetList.filter((a: any) => (a?.group || '素材') === activeGroup);
+
+  // 从项目素材库导入：把图/视频生成为对应节点（位置按序号错开，避免叠在一起）
+  const importAssetAsNode = (asset: any, index = 0) => {
+    const isVideo =
+      asset?.type === 'video' ||
+      /\.(mp4|webm|mov|m3u8|mkv)(\?|#|$)/i.test(asset?.url || asset?.imageUrl || '');
     const url = asset?.url || asset?.imageUrl || '';
     if (!url) return;
-    addNode(isVideo ? 'video' : 'image', { x: 120 + Math.random() * 200, y: 120 + Math.random() * 200 });
-    // addNode 生成的是最新节点，用 updateNodeData 补 url
-    const st = useCanvasStore.getState();
-    const last = st.nodes[st.nodes.length - 1];
-    if (last) st.updateNodeData(last.id, { url });
+    const col = index % 4;
+    const row = Math.floor(index / 4);
+    addNode(isVideo ? 'video' : 'image', { x: 80 + col * 320, y: 80 + row * 340 }, {
+      url,
+      label: asset?.title || (isVideo ? '视频' : '图片'),
+    });
     setShowAssetPicker(false);
+  };
+
+  // 从本地文件导入图/视频为节点（素材库为空时的兜底路径）
+  const handleImportLocal = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach((file, i) => {
+      const url = URL.createObjectURL(file);
+      const isVideo = file.type.startsWith('video/');
+      addNode(isVideo ? 'video' : 'image', { x: 80 + (i % 4) * 320, y: 80 + Math.floor(i / 4) * 340 }, {
+        url,
+        label: file.name,
+      });
+    });
+    setShowAssetPicker(false);
+    if (mediaInputRef.current) mediaInputRef.current.value = '';
   };
 
   const handleDrop = useCallback(
@@ -206,77 +233,236 @@ function CanvasContent() {
 
         <div style={{ flex: 1 }} />
 
-        {/* 从素材库导入 */}
+        {/* 从素材库导入：按钮始终可点，素材为空时在面板里给出说明 + 本地导入兜底 */}
         <div style={{ position: 'relative' }}>
           <button
             onClick={() => setShowAssetPicker(!showAssetPicker)}
-            disabled={!assets || assets.length === 0}
             style={{
               padding: '6px 12px',
-              background: (!assets || assets.length === 0) ? '#e9edf5' : 'linear-gradient(135deg, #a18cd1, #fbc2eb)',
+              background: 'linear-gradient(135deg, #a18cd1, #fbc2eb)',
               border: 'none',
               borderRadius: '6px',
-              color: (!assets || assets.length === 0) ? '#aaa' : '#fff',
-              cursor: (!assets || assets.length === 0) ? 'not-allowed' : 'pointer',
+              color: '#fff',
+              cursor: 'pointer',
               fontSize: '12px',
               fontWeight: 600,
               display: 'flex',
               alignItems: 'center',
               gap: '4px',
             }}
-            title={(!assets || assets.length === 0) ? '项目素材库为空' : '从项目素材库导入图/视频'}
+            title={
+              assetList.length
+                ? `从项目素材导入（${assetList.length} 项）`
+                : '项目暂无素材，可在面板内改为从本地导入'
+            }
           >
             <Download size={14} style={{ transform: 'rotate(180deg)' }} /> 从素材库导入
+            <span
+              style={{
+                background: 'rgba(255,255,255,.28)',
+                borderRadius: '8px',
+                padding: '0 5px',
+                fontSize: '10px',
+                lineHeight: '14px',
+              }}
+            >
+              {assetList.length}
+            </span>
           </button>
-          {showAssetPicker && assets && assets.length > 0 && (
+          {showAssetPicker && (
             <div
               style={{
                 position: 'absolute',
                 top: '100%',
                 right: 0,
-                marginTop: '4px',
-                width: '280px',
-                maxHeight: '360px',
-                overflowY: 'auto',
-                background: '#eef2fb',
+                marginTop: '6px',
+                width: '340px',
+                background: '#fff',
                 border: '1px solid #dde4f0',
-                borderRadius: '8px',
-                padding: '8px',
+                borderRadius: '10px',
+                boxShadow: '0 12px 32px rgba(28,44,80,.14)',
                 zIndex: 100,
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '8px',
+                overflow: 'hidden',
               }}
             >
-              {assets.map((a, i) => {
-                const url = a?.url || a?.imageUrl || '';
-                const title = a?.title || ('素材 ' + (i + 1));
-                const isVideo = a?.type === 'video' || /\.(mp4|webm|mov|m3u8)(\?|$)/i.test(url);
-                return (
+              {/* 头部：来源 + 本地导入兜底 */}
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderBottom: '1px solid #eef2fb',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#2b3a5b' }}>项目素材</div>
+                <div style={{ fontSize: '11px', color: '#8a94ab' }}>
+                  {projectTitle ? `${projectTitle} · ` : ''}
+                  {assetList.length} 项
+                </div>
+                <div style={{ flex: 1 }} />
+                <button
+                  onClick={() => mediaInputRef.current?.click()}
+                  style={{
+                    padding: '3px 8px',
+                    background: '#eef2fb',
+                    border: '1px solid #dde4f0',
+                    borderRadius: '5px',
+                    color: '#3d4d6b',
+                    cursor: 'pointer',
+                    fontSize: '11px',
+                  }}
+                >
+                  本地导入
+                </button>
+              </div>
+
+              {assetList.length === 0 ? (
+                <div style={{ padding: '22px 18px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '26px' }}>🗂</div>
+                  <div style={{ fontSize: '12px', color: '#2b3a5b', fontWeight: 600, marginTop: '6px' }}>
+                    这个项目里还没有图 / 视频素材
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#8a94ab', marginTop: '4px', lineHeight: 1.7 }}>
+                    素材来自「资产」里生成的角色 / 场景 / 道具图，
+                    <br />
+                    以及「分镜」里生成的首帧图与视频。
+                  </div>
                   <button
-                    key={a?.id || i}
-                    onClick={() => importAssetAsNode(a)}
+                    onClick={() => mediaInputRef.current?.click()}
                     style={{
-                      background: 'none',
-                      border: '1px solid #dde4f0',
+                      marginTop: '12px',
+                      padding: '6px 14px',
+                      background: 'linear-gradient(135deg, #a18cd1, #fbc2eb)',
+                      border: 'none',
                       borderRadius: '6px',
-                      padding: '4px',
+                      color: '#fff',
                       cursor: 'pointer',
-                      textAlign: 'left',
+                      fontSize: '12px',
+                      fontWeight: 600,
                     }}
-                    title={title}
                   >
-                    <div style={{ width: '100%', height: '70px', borderRadius: '4px', overflow: 'hidden', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {url ? (
-                        isVideo ? <Film size={28} color="#fff" /> : <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      ) : <ImageIcon size={28} color="#aaa" />}
-                    </div>
-                    <div style={{ fontSize: '10px', color: '#555', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {isVideo ? '🎬 ' : '🖼 '}{title}
-                    </div>
+                    从本地选择图片 / 视频
                   </button>
-                );
-              })}
+                </div>
+              ) : (
+                <>
+                  {/* 分组筛选 */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: '4px',
+                      padding: '8px 10px',
+                      flexWrap: 'wrap',
+                      borderBottom: '1px solid #f3f6fc',
+                    }}
+                  >
+                    {['全部', ...assetGroups].map((g) => {
+                      const on = activeGroup === g;
+                      const count = g === '全部' ? assetList.length : assetList.filter((a: any) => (a?.group || '素材') === g).length;
+                      return (
+                        <button
+                          key={g}
+                          onClick={() => setAssetGroup(g)}
+                          style={{
+                            padding: '2px 8px',
+                            borderRadius: '10px',
+                            border: '1px solid ' + (on ? '#a18cd1' : '#e3e9f5'),
+                            background: on ? '#f3eefc' : '#fff',
+                            color: on ? '#6b46c1' : '#7a86a1',
+                            fontSize: '11px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {g} {count}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div
+                    style={{
+                      maxHeight: '320px',
+                      overflowY: 'auto',
+                      padding: '8px',
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 1fr',
+                      gap: '8px',
+                    }}
+                  >
+                    {shownAssets.map((a: any, i: number) => {
+                      const url = a?.url || a?.imageUrl || '';
+                      const title = a?.title || ('素材 ' + (i + 1));
+                      const isVideo = a?.type === 'video' || /\.(mp4|webm|mov|m3u8|mkv)(\?|#|$)/i.test(url);
+                      return (
+                        <button
+                          key={a?.id || i}
+                          onClick={() => importAssetAsNode(a, i)}
+                          style={{
+                            background: 'none',
+                            border: '1px solid #dde4f0',
+                            borderRadius: '6px',
+                            padding: '4px',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                          }}
+                          title={title}
+                        >
+                          <div
+                            style={{
+                              width: '100%',
+                              height: '70px',
+                              borderRadius: '4px',
+                              overflow: 'hidden',
+                              background: '#000',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              position: 'relative',
+                            }}
+                          >
+                            {url ? (
+                              isVideo ? (
+                                <>
+                                  <video src={url} muted preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                  <Film size={18} color="#fff" style={{ position: 'absolute', left: 6, bottom: 6 }} />
+                                </>
+                              ) : (
+                                <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              )
+                            ) : (
+                              <ImageIcon size={28} color="#aaa" />
+                            )}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: '10px',
+                              color: '#555',
+                              marginTop: '4px',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }}
+                          >
+                            {isVideo ? '🎬 ' : '🖼 '}
+                            {title}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div
+                    style={{
+                      padding: '6px 12px',
+                      borderTop: '1px solid #f3f6fc',
+                      fontSize: '10px',
+                      color: '#8a94ab',
+                    }}
+                  >
+                    点击任意素材即在画布生成对应节点
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -319,6 +505,14 @@ function CanvasContent() {
           <Upload size={14} />
         </button>
         <input ref={fileInputRef} type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
+        <input
+          ref={mediaInputRef}
+          type="file"
+          accept="image/*,video/*"
+          multiple
+          onChange={handleImportLocal}
+          style={{ display: 'none' }}
+        />
 
         <button
           onClick={() => {
