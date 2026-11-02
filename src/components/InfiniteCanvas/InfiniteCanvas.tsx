@@ -61,14 +61,38 @@ function CanvasContent() {
 
   // 从项目素材库导入：把图/视频生成为对应节点（位置按序号错开，避免叠在一起）
   const importAssetAsNode = (asset: any, index = 0) => {
+    const col = index % 4;
+    const row = Math.floor(index / 4);
+    const pos = { x: 80 + col * 320, y: 80 + row * 340 };
+
+    // 提示词条目：直接落成「AI 生成」节点，并预填提示词 + 生成类型 + 模型。
+    // 🔴 之前漏了这条分支——prompt 条目 url 为空，会被下面的 if(!url) return 直接吞掉，点了没反应。
+    if (asset?.type === 'prompt') {
+      const ptext = (asset?.promptText || '').trim();
+      if (!ptext) return;
+      const isVideoPrompt = asset?.promptKind === 'video';
+      const generateType = isVideoPrompt ? 'text-to-video' : 'text-to-image';
+      const model = MODELS[generateType]?.[0] || '';
+      const params = isVideoPrompt
+        ? { ratio: '9:16', duration: 5 }
+        : { resolution: '1024x1024' };
+      addNode('generate', pos, {
+        prompt: ptext,
+        generateType,
+        model,
+        params,
+        label: asset?.title || (isVideoPrompt ? '视频提示词' : '首帧提示词'),
+      });
+      setShowAssetPicker(false);
+      return;
+    }
+
     const isVideo =
       asset?.type === 'video' ||
       /\.(mp4|webm|mov|m3u8|mkv)(\?|#|$)/i.test(asset?.url || asset?.imageUrl || '');
     const url = asset?.url || asset?.imageUrl || '';
     if (!url) return;
-    const col = index % 4;
-    const row = Math.floor(index / 4);
-    addNode(isVideo ? 'video' : 'image', { x: 80 + col * 320, y: 80 + row * 340 }, {
+    addNode(isVideo ? 'video' : 'image', pos, {
       url,
       label: asset?.title || (isVideo ? '视频' : '图片'),
     });
