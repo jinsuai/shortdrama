@@ -1,7 +1,9 @@
 // @ts-nocheck
+import { useState } from 'react';
 import { Handle, Position, NodeProps } from '@xyflow/react';
-import { Trash2, Play, Image as ImageIcon, Film, Type, Settings, Loader, CheckCircle, AlertCircle } from '../../lib/icons';
+import { Trash2, Play, Image as ImageIcon, Film, Type, Settings, Loader, CheckCircle, AlertCircle, CheckSquare } from '../../lib/icons';
 import { useCanvasStore } from './store';
+import { useCanvasBridge } from './bridge';
 import { GENERATE_TYPES, MODELS, GenerateNodeData } from './types';
 
 const nodeStyle: React.CSSProperties = {
@@ -149,7 +151,26 @@ export function VideoNode({ id, data, selected }: NodeProps) {
 // AI生成节点
 export function GenerateNode({ id, data, selected }: NodeProps) {
   const { updateNodeData, removeNode, runNode, isRunning } = useCanvasStore();
+  const { onSaveAsset } = useCanvasBridge();
+  const [saved, setSaved] = useState(false);
   const genData = data as GenerateNodeData;
+
+  // 把生成结果写回项目素材库（走 Studio 注入的 onSaveAsset → project setter → 自动存盘）
+  const handleSave = () => {
+    if (!onSaveAsset || !genData.result) return;
+    const asset = {
+      id: 'a_canvas_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8),
+      type: genData.resultType || 'image',
+      title: `画布生成·${genData.generateType}·${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
+      url: genData.result,
+      status: 'ready',
+      tags: ['画布生成', genData.generateType],
+      favorite: false,
+      createdAt: Date.now(),
+    };
+    onSaveAsset(asset);
+    setSaved(true);
+  };
 
   const statusColors: Record<string, string> = {
     idle: '#888',
@@ -276,6 +297,31 @@ export function GenerateNode({ id, data, selected }: NodeProps) {
           <Play size={12} />
           {genData.status === 'running' ? '生成中...' : '运行此节点'}
         </button>
+        {genData.status === 'success' && genData.result && genData.resultType !== 'text' && (
+          <button
+            onClick={handleSave}
+            disabled={!onSaveAsset}
+            style={{
+              width: '100%',
+              marginTop: '6px',
+              padding: '6px',
+              background: saved ? '#2f9e44' : 'linear-gradient(135deg, #f59f00, #f08c00)',
+              border: 'none',
+              borderRadius: '4px',
+              color: '#fff',
+              cursor: onSaveAsset ? 'pointer' : 'not-allowed',
+              fontSize: '11px',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+            }}
+          >
+            <CheckSquare size={12} />
+            {saved ? '已存入素材库 ✓' : '存入素材库'}
+          </button>
+        )}
       </div>
     </div>
   );

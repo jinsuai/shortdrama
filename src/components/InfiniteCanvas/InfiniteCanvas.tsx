@@ -27,6 +27,7 @@ import {
 import { useCanvasStore } from './store';
 import { nodeTypes } from './nodes';
 import { NodeType } from './types';
+import { useCanvasBridge } from './bridge';
 
 function CanvasContent() {
   const {
@@ -43,9 +44,24 @@ function CanvasContent() {
     importWorkflow,
   } = useCanvasStore();
 
+  const { assets } = useCanvasBridge();
   const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const [showAssetPicker, setShowAssetPicker] = useState(false);
+
+  // 从项目素材库导入：把图/视频生成为对应节点
+  const importAssetAsNode = (asset: any) => {
+    const isVideo = asset?.type === 'video' || /\.(mp4|webm|mov|m3u8)(\?|$)/i.test(asset?.url || asset?.imageUrl || '');
+    const url = asset?.url || asset?.imageUrl || '';
+    if (!url) return;
+    addNode(isVideo ? 'video' : 'image', { x: 120 + Math.random() * 200, y: 120 + Math.random() * 200 });
+    // addNode 生成的是最新节点，用 updateNodeData 补 url
+    const st = useCanvasStore.getState();
+    const last = st.nodes[st.nodes.length - 1];
+    if (last) st.updateNodeData(last.id, { url });
+    setShowAssetPicker(false);
+  };
 
   const handleDrop = useCallback(
     (event: React.DragEvent) => {
@@ -189,6 +205,81 @@ function CanvasContent() {
         </div>
 
         <div style={{ flex: 1 }} />
+
+        {/* 从素材库导入 */}
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={() => setShowAssetPicker(!showAssetPicker)}
+            disabled={!assets || assets.length === 0}
+            style={{
+              padding: '6px 12px',
+              background: (!assets || assets.length === 0) ? '#e9edf5' : 'linear-gradient(135deg, #a18cd1, #fbc2eb)',
+              border: 'none',
+              borderRadius: '6px',
+              color: (!assets || assets.length === 0) ? '#aaa' : '#fff',
+              cursor: (!assets || assets.length === 0) ? 'not-allowed' : 'pointer',
+              fontSize: '12px',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+            }}
+            title={(!assets || assets.length === 0) ? '项目素材库为空' : '从项目素材库导入图/视频'}
+          >
+            <Download size={14} style={{ transform: 'rotate(180deg)' }} /> 从素材库导入
+          </button>
+          {showAssetPicker && assets && assets.length > 0 && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '100%',
+                right: 0,
+                marginTop: '4px',
+                width: '280px',
+                maxHeight: '360px',
+                overflowY: 'auto',
+                background: '#eef2fb',
+                border: '1px solid #dde4f0',
+                borderRadius: '8px',
+                padding: '8px',
+                zIndex: 100,
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '8px',
+              }}
+            >
+              {assets.map((a, i) => {
+                const url = a?.url || a?.imageUrl || '';
+                const title = a?.title || ('素材 ' + (i + 1));
+                const isVideo = a?.type === 'video' || /\.(mp4|webm|mov|m3u8)(\?|$)/i.test(url);
+                return (
+                  <button
+                    key={a?.id || i}
+                    onClick={() => importAssetAsNode(a)}
+                    style={{
+                      background: 'none',
+                      border: '1px solid #dde4f0',
+                      borderRadius: '6px',
+                      padding: '4px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                    title={title}
+                  >
+                    <div style={{ width: '100%', height: '70px', borderRadius: '4px', overflow: 'hidden', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {url ? (
+                        isVideo ? <Film size={28} color="#fff" /> : <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : <ImageIcon size={28} color="#aaa" />}
+                    </div>
+                    <div style={{ fontSize: '10px', color: '#555', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {isVideo ? '🎬 ' : '🖼 '}{title}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* 运行按钮 */}
         <button
@@ -342,7 +433,7 @@ function CanvasContent() {
           zIndex: 5,
         }}
       >
-        节点: {nodes.length} · 连线: {edges.length} · 拖拽左侧节点到画布 · 连接节点后点击"运行全部"
+        节点: {nodes.length} · 连线: {edges.length} · 拖拽左侧节点到画布 · 可从项目素材库导入图/视频 · 生成结果可存回素材库
       </div>
     </div>
   );

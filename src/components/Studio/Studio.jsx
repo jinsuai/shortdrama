@@ -283,7 +283,17 @@ export function Studio({
         />
       )}
       {view === 'library' && <LibraryView assets={allAssets} />}
-      {view === 'canvas' && <InfiniteCanvas style={{ position: 'absolute', inset: 0 }} />}
+      {view === 'canvas' && (
+        <InfiniteCanvas
+          style={{ position: 'absolute', inset: 0 }}
+          assets={project?.assets || []}
+          onSaveAsset={
+            project
+              ? (asset) => update((p) => ({ ...p, assets: [asset, ...(p.assets || [])] }))
+              : undefined
+          }
+        />
+      )}
       {view === 'settings' && (
         <SettingsView
           onSave={(s) => { onSaveSettings?.(s); log?.('设置已保存'); }}
