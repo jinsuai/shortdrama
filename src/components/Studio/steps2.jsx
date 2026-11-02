@@ -11,6 +11,8 @@ import { analyzeStoryboard, generateKeyframeShot, DEFAULT_SHOT_COUNT } from '../
 import { videoPolishSystemPrompt, refineVideoPromptU00 } from '../../lib/prompts.js';
 import { GridSplitModal } from './modals';
 import { characterFourView } from '../../utils.js';
+import { InfiniteCanvas } from '../InfiniteCanvas';
+import { collectProjectAssets } from '../InfiniteCanvas/projectAssets';
 
 const P = { padding: '18px 22px' };
 
@@ -156,22 +158,33 @@ export function StoryboardStep({ project, update, log }) {
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
-        <button onClick={insertShot} style={{
-          width: '100%', padding: '9px', marginBottom: 12, borderRadius: 8, cursor: 'pointer',
-          background: 'rgba(15,23,42,0.048)', border: '1px dashed rgba(15,23,42,0.24)',
-          color: '#5b6678', fontSize: 12, fontFamily: 'inherit',
-        }}><Icon name="plus" size={13} /> {T.storyboard.insert}</button>
+      {mode === 'outline' ? (
+        <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+          <button onClick={insertShot} style={{
+            width: '100%', padding: '9px', marginBottom: 12, borderRadius: 8, cursor: 'pointer',
+            background: 'rgba(15,23,42,0.048)', border: '1px dashed rgba(15,23,42,0.24)',
+            color: '#5b6678', fontSize: 12, fontFamily: 'inherit',
+          }}><Icon name="plus" size={13} /> {T.storyboard.insert}</button>
 
-        {shots.length === 0
-          ? <Empty icon="film" text={T.storyboard.empty} />
-          : shots.map((s, i) => (
-            <FrameRow key={s.id || i} shot={s} idx={i} index={i + 1} active={sel === i}
-              generating={genIdx === i}
-              onClick={() => setSel(sel === i ? null : i)}
-              onAction={onFrameAction} onGenerate={genOne} />
-          ))}
-      </div>
+          {shots.length === 0
+            ? <Empty icon="film" text={T.storyboard.empty} />
+            : shots.map((s, i) => (
+              <FrameRow key={s.id || i} shot={s} idx={i} index={i + 1} active={sel === i}
+                generating={genIdx === i}
+                onClick={() => setSel(sel === i ? null : i)}
+                onAction={onFrameAction} onGenerate={genOne} />
+            ))}
+        </div>
+      ) : (
+        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+          <InfiniteCanvas
+            style={{ position: 'absolute', inset: 0 }}
+            assets={canvasAssets}
+            projectTitle={project?.title}
+            onSaveAsset={project ? (asset) => update?.({ ...project, assets: [asset, ...(project.assets || [])] }) : undefined}
+          />
+        </div>
+      )}
 
       <GridSplitModal open={gridOpen} onClose={() => setGridOpen(false)}
         onApply={applyGridParts} log={log}
