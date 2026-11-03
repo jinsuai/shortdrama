@@ -108,6 +108,48 @@ function resolutionToRatio(resolution) {
   return null;
 }
 
+/**
+ * 把 UI 的 resolution 档位字符串（如 "1080p竖" / "768p横(1280*720)" / "720p(1:1)"）解析为
+ * 真实像素尺寸字符串（如 "1080x1920" / "1280x720" / "720x720"）。
+ *
+ * 🔴 为什么要有这层：直连 OpenAI 兼容视频 API 时，模型默认只认 aspect_ratio（画幅），
+ *    不认「1080P/768P」这种档位；若不把像素数补上，选了 1080P 实际喂的是模型自身的默认
+ *    分辨率（常是 768P 级别）—— 这正是「选 1080P 喂 768P」的 bug 残留。这里把档位翻译成
+ *    真实像素，让直连路径也吃到用户选的分辨率。
+ *
+ * 约定：p 数字 = 短边（较小维度），长边 = 短边 × 16/9 并取整到偶数（视频编码器要求偶尺寸）。
+ *   1080p竖 → 1080×1920   1080p横 → 1920×1080   1080p(1:1) → 1080×1080
+ *   768p竖  → 768×1366    720p横  → 1280×720     480p竖     → 480×854
+ * 已是 "WxH" / "W*H" 像素格式的透传（不再二次计算）。解析不出档位返回 null（交回模型默认 / c.size）。
+ */
+function resolutionToSize(resolution) {
+  if (!resolution || typeof resolution !== 'string') return null;
+  const s = resolution.trim();
+  // 已是像素格式：归一化成 "WxH"
+  const px = s.match(/^(\d+)\s*[x×*]\s*(\d+)$/i);
+  if (px) {
+    const w = +px[1], h = +px[2];
+    const even = (n) => (n % 2 === 0 ? n : n + 1);
+    return `${even(w)}x${even(h)}`;
+  }
+  // 档位格式：提取 "数字p"（480p / 576p / 720p / 768p / 1080p…）
+  const pm = s.toLowerCase().match(/(\d+)\s*p\b/);
+  if (!pm) return null;
+  const shortEdge = +pm[1];
+  if (!shortEdge) return null;
+  const even = (n) => (n % 2 === 0 ? n : n + 1);
+  if (/竖|portrait|vertical/.test(s)) {
+    const h = even(Math.round(shortEdge * 16 / 9));
+    return `${shortEdge}x${h}`;          // 竖屏：宽=短边，高=长边
+  }
+  if (/方|square|1:1/.test(s)) {
+    return `${shortEdge}x${shortEdge}`;
+  }
+  // 横屏（含未显式标方向，兜底按 16:9 横屏）
+  const w = even(Math.round(shortEdge * 16 / 9));
+  return `${w}x${shortEdge}`;
+}
+
 /** 收集 payload 中 ref_image_0 / ref_image_1 … 这类带序号的参考资源，按序返回数组 */
 function collectIndexed(p, prefix) {
   const arr = [];
@@ -129,7 +171,15 @@ function normalizeVideoPayload(p = {}) {
   const seconds = p.duration != null ? String(p.duration) : '5';
   const aspect = p.ratio || resolutionToRatio(p.resolution) || '16:9';
   const out = { prompt: p.prompt, mode, seconds, aspect_ratio: aspect };
-  if (p.size) out.size = p.size;                            // 尺寸取值由厂商决定，在设置面板按其文档填写
+  // 尺寸：显式 p.size 优先（调用方已算好）；否则从 resolution 档位推导真实像素。
+  // 直连 OpenAI 兼容视频 API 时这一档位→像素的映射是关键 —— 否则选 1080P 只会给画幅、
+  // 不会给像素，模型退回自身默认（常 768P 级），造成「选 1080P 喂 768P」。
+  // 厂商若不支持 size 字段，在「设置 → 模型配置」留空 c.size 即可不发送（此处推导值会被 c.size 覆盖）。
+  if (p.size) out.size = p.size;
+  else {
+    const sz = resolutionToSize(p.resolution);
+    if (sz) out.size = sz;
+  }
   if (p.first_frame) out.first_frame = p.first_frame;       // 图生视频首帧
   if (p.last_frame) out.last_frame = p.last_frame;          // 图生视频尾帧
   const images = Array.isArray(p.images) ? p.images : collectIndexed(p, 'ref_image_');
@@ -142,7 +192,11 @@ function normalizeVideoPayload(p = {}) {
 export async function runDispatchJob({ type, payload = {}, onProgress = () => {}, timeoutMs = 600000, signal } = {}) {
   if (type === 'video' || type === 'intro' || type === 'video_shots') {
     // 批量 shots（旧 H3 长视频专属）不在通用视频模型能力内，降级为取首段单生成。
-    const norm = normalizeVideoPayload(type === 'video_shots' ? (payload.shots?.[0] || payload) : payload);
+    const chosen = type === 'video_shots' ? (payload.shots?.[0] || payload) : payload;
+    // 长视频路径里 resolution 常挂在顶层 payload 而非 shots[0]，这里兜底合并，
+    // 避免子对象缺 resolution 导致档位→像素映射失效（选 1080P 落空）。
+    const merged = { ...chosen, resolution: chosen.resolution ?? payload.resolution };
+    const norm = normalizeVideoPayload(merged);
     const out = await pGenerateVideo({ ...norm, onProgress, timeoutMs, signal });
     return { result_url: out.resultUrl, ...out };
   }
