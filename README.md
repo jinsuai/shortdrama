@@ -121,13 +121,9 @@ local-packages/          # 本地依赖包（ui / agnes-client / glm-client）
 
 - ✅ **第一优先 · 节点画布（react-flow）**：分镜段落 / 参考图 / 视频片段作为节点可视化排布，与线性「大纲模式」双视图切换。
   已在 `components/InfiniteCanvas/` 落地（支持从项目素材、分镜首帧 / 视频提示词一键导入为生成节点），不动现有生成逻辑，风险低。
-- 🟡 **第二优先 · 一键全自动流水线（可选 Agent 模式）**：新增 `lib/pipeline/orchestrator.js` 编排器，把
-  「剧本 → 艺术指导 → 资产 → 分镜 → 动态 → 装配 → 配音 → 混音 → 导出」用合理默认值自动连跑；
-  但每一步允许手动覆盖 / 重跑，保留「分步可控」卖点。Agent 只做「建议默认值 + 异常兜底」，不剥夺用户控制权。
-  复用 `lib/providers/` 模型接入层与现有各 step 提交函数。工作量：大（状态机 + Agent 编排）｜风险：中。
-- 🟡 **第三优先 · 多轨剪辑台（ffmpeg.wasm）**：把「后端合成黑盒」换成浏览器内交互式多轨剪辑，对齐 reveric 的剪辑台。
-  工作量：中｜ROI 不如第一、第二直接。
-- ⚪ **远期 · 3D 导演台（three.js）**：理念值钱但 Web 端成本高（Flutter Scene 无对应）；建议等第一、第二验证后再评估，暂不碰。
+- ✅ **第二优先 · 一键全自动流水线**：`lib/pipeline/orchestrator.js` 九步编排器已可运行，复用 `lib/providers` / `lib/storyboard.js` / `lib/merge.js` 等底层；`src/lib/pipeline/agent.js` 提供 Agent 默认值建议与错误分类兜底；面板 `AutoPipelinePanel.jsx` 含阶段清单、日志、中止、Agent 开关。
+- ✅ **第三优先 · 多轨剪辑台（ffmpeg.wasm）**：`MultiTrackEditor.jsx` 实现视频 / 配音 / 配乐三轨时间轴，每镜可裁剪与独立音量控制，桌面端调内置 ffmpeg、Web 端 fallback ffmpeg.wasm；混音失败自动降级为无声成片。
+- ✅ **远期 · 3D 导演台（three.js）**：已实装 `Director3D` 组件（去掉了 VIP gate，开源版开放），含角色/道具/机位管理、场景模板、AI 生成四视图与 3D 模型能力；`src/components/Director3D/` 完整接入 Studio 第 06.6 步。依赖：`three@^0.160.0` + `@react-three/fiber@^8.15.0` + `@react-three/drei@^9.92.0`。
 
 ## 说明
 
