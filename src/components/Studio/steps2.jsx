@@ -41,6 +41,15 @@ export function StoryboardStep({ project, update, log }) {
   const [gridOpen, setGridOpen] = useState(false);
   const [genUrl, setGenUrl] = useState('');               // 手动拆分用的宫格图
 
+  // 分镜双视图：list = 逐帧列表（默认），canvas = 无限画布。
+  // 存在 project 上而不是组件 state，切到别的步骤再回来仍是上次那个视图。
+  const mode = project?.storyboardMode || 'list';
+  const setMode = (v) => update?.({ storyboardMode: v });
+
+  // 画布可导入素材：角色 / 场景 / 道具 / 分镜首帧与视频 / 素材库，与 Studio 里同一套汇总逻辑。
+  // 之前这里直接引用了未声明的 canvasAssets，导致整个 Studio 首屏 ReferenceError 白屏。
+  const canvasAssets = useMemo(() => collectProjectAssets(project), [project]);
+
   /** 宫格拆分结果写入分镜帧：逐帧覆盖，帧数不足则追加 */
   const applyGridParts = async (parts) => {
     try {
@@ -148,6 +157,12 @@ export function StoryboardStep({ project, update, log }) {
           <Btn size="sm" onClick={() => setScriptOpen(true)}>{T.storyboard.viewScript}</Btn>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Seg
+            size="sm"
+            value={mode}
+            onChange={setMode}
+            options={[{ key: 'list', label: '列表' }, { key: 'canvas', label: '画布' }]}
+          />
           <Btn size="sm" variant="primary" onClick={doAnalyze} disabled={analyzing}>
             <Icon name="sparkle" size={12} />{analyzing ? '分析剧本中…' : T.storyboard.generate}
           </Btn>
@@ -158,7 +173,7 @@ export function StoryboardStep({ project, update, log }) {
         </div>
       </div>
 
-      {mode === 'outline' ? (
+      {mode === 'list' ? (
         <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
           <button onClick={insertShot} style={{
             width: '100%', padding: '9px', marginBottom: 12, borderRadius: 8, cursor: 'pointer',
