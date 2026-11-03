@@ -202,6 +202,7 @@ export function Studio({
         case 'motion': return <MotionContext project={project} update={update} />;
         case 'assembly': return <AssemblyContext project={project} update={update} log={log} />;
         case 'editor': return null;
+        case 'director': return null;
         case 'voice': return <VoiceContext project={project} />;
         case 'mix': return <MixContext project={project} update={update} log={log} />;
         case 'export': return <ExportContext />;

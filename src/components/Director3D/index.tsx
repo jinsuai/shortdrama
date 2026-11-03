@@ -3,60 +3,6 @@ import { DirectorCanvas } from './DirectorCanvas';
 import { DirectorPanel } from './DirectorPanel';
 import { useDirectorStore } from './store';
 
-// VIP权限校验组件
-function VipGate({ onUnlock }: { onUnlock?: () => void }) {
-  return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: '100%',
-      height: '100%',
-      background: 'linear-gradient(135deg, #f6f8fc 0%, #e6ecf8 100%)',
-      color: '#fff',
-      padding: 40,
-      textAlign: 'center'
-    }}>
-      <div style={{ fontSize: 64, marginBottom: 20 }}>🎬</div>
-      <h2 style={{ fontSize: 28, margin: '0 0 12px', background: 'linear-gradient(135deg, #f59e0b, #d97706)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-        3D导演台
-      </h2>
-      <p style={{ fontSize: 16, color: '#999', margin: '0 0 8px', maxWidth: 500, lineHeight: 1.6 }}>
-        专业级3D虚拟场景搭建，多机位管理，渲染首帧参考图
-      </p>
-      <p style={{ fontSize: 14, color: '#666', margin: '0 0 24px' }}>
-        角色/道具/场景搭建 · 多机位运镜 · 首帧渲染 · 对接图生视频
-      </p>
-      <div style={{
-        background: 'rgba(245, 158, 11, 0.1)',
-        border: '1px solid rgba(245, 158, 11, 0.3)',
-        borderRadius: 12,
-        padding: '16px 24px',
-        marginBottom: 24
-      }}>
-        <div style={{ fontSize: 14, color: '#f59e0b', fontWeight: 600 }}>🔒 VIP专属功能</div>
-        <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>订阅会员后即可使用3D导演台全部功能</div>
-      </div>
-      <button
-        onClick={onUnlock}
-        style={{
-          padding: '12px 32px',
-          background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-          border: 'none',
-          borderRadius: 8,
-          color: '#fff',
-          cursor: 'pointer',
-          fontSize: 16,
-          fontWeight: 600
-        }}
-      >
-        立即开通 VIP
-      </button>
-    </div>
-  );
-}
-
 export interface Director3DProps {
   width?: string | number;
   height?: string | number;
@@ -93,29 +39,6 @@ export function Director3D({
 }: Director3DProps) {
   const { exportScene, exportCameraReference, activeCameraId } = useDirectorStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  // VIP权限校验
-  const [isVip, setIsVip] = useState(() => {
-    return localStorage.getItem("USER_VIP_STATUS") === "true";
-  });
-
-  const handleUnlockVip = () => {
-    // 触发父组件打开充值/会员页面
-    if (window.onOpenMembership) {
-      window.onOpenMembership();
-    } else {
-      alert("请在设置中开通VIP会员后使用3D导演台");
-    }
-  };
-
-  // 如果不是VIP，显示VIP权限提示
-  if (!isVip) {
-    return (
-      <div style={{ width, height, ...style }}>
-        <VipGate onUnlock={handleUnlockVip} />
-      </div>
-    );
-  }
 
   const handleExport = () => {
     const data = exportScene();

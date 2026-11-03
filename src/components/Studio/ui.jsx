@@ -64,6 +64,7 @@ const PATHS = {
   zap: 'M13 2L3 14h9l-1 8 10-12h-9z',
   stop: 'M6 6h12v12H6z',
   scissors: 'M6 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM6 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM20 4 8.5 15.5M14 14l6 6',
+  director: 'M15 10l-4 4-4-4M4 4h16v12H4z',
 };
 
 export function Icon({ name, size = 16, color = 'currentColor', strokeWidth = 1.8, fill = 'none' }) {
