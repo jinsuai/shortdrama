@@ -97,4 +97,73 @@ export async function probeFFmpeg() {
   }
 }
 
+/** base64 → Uint8Array（音视频通用） */
+export function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const len = bin.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i += 1) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+/**
+ * 带「按镜修剪」的视频拼接（多轨剪辑台核心能力）。
+ * clips: [{ url, start, end }]，start/end 为秒；start/end 缺省或 0 表示取整段。
+ * 每段先按 in/out 重编码（veryfast）保证帧对齐，再 concat 拷贝，避免拼接抖动/黑帧。
+ * returnBlob: true 时返回 Blob（用于落盘/转码），否则返回 objectURL。
+ */
+export async function concatVideosTrimmed(clips, { returnBlob = false } = {}) {
+  if (!clips || !clips.length) throw new Error("没有可合并的视频片段。");
+  const ff = await loadFFmpeg();
+  const segNames = [];
+  for (let i = 0; i < clips.length; i += 1) {
+    const c = clips[i];
+    let buf;
+    try {
+      buf = await (await fetch(c.url)).arrayBuffer();
+    } catch (e) {
+      throw new Error(`视频获取失败：${c.url}（可能跨域或离线）`);
+    }
+    const inName = `in${i}.mp4`;
+    await ff.writeFile(inName, new Uint8Array(buf));
+    const start = Number(c.start) || 0;
+    const end = Number(c.end) || 0;
+    const seg = `seg${i}.mp4`;
+    const args = [];
+    if (start > 0) args.push("-ss", String(start));
+    if (end > 0) args.push("-to", String(end));
+    args.push("-i", inName, "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", seg);
+    await ff.exec(args);
+    segNames.push(seg);
+  }
+  const list = segNames.map((n) => `file '${n}'`).join("\n");
+  await ff.writeFile("list.txt", new TextEncoder().encode(list));
+  await ff.exec(["-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "out.mp4"]);
+  const data = await ff.readFile("out.mp4");
+  const blob = new Blob([data], { type: "video/mp4" });
+  if (returnBlob) return blob;
+  return URL.createObjectURL(blob);
+}
+
+/**
+ * 把音轨混进视频（视频流拷贝、音频重编码 aac）。
+ * videoBytes: Uint8Array（拼接后的无声视频）；audioB64: WAV base64（可空 → 仅视频）。
+ * returnBlob: true 时返回 Blob，否则 objectURL。
+ */
+export async function muxAudioToVideo(videoBytes, audioB64, { returnBlob = false } = {}) {
+  const ff = await loadFFmpeg();
+  await ff.writeFile("v.mp4", new Uint8Array(videoBytes));
+  if (audioB64) await ff.writeFile("a.wav", b64ToBytes(audioB64));
+  const args = ["-i", "v.mp4"];
+  if (audioB64) args.push("-i", "a.wav");
+  args.push("-c:v", "copy");
+  if (audioB64) args.push("-c:a", "aac", "-shortest");
+  args.push("out.mp4");
+  await ff.exec(args);
+  const data = await ff.readFile("out.mp4");
+  const blob = new Blob([data], { type: "video/mp4" });
+  if (returnBlob) return blob;
+  return URL.createObjectURL(blob);
+}
+
 export { loadFFmpeg };

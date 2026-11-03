@@ -61,6 +61,9 @@ const PATHS = {
   arrowLeft: 'm12 19-7-7 7-7M19 12H5',
   edit: 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z',
   clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2',
+  zap: 'M13 2L3 14h9l-1 8 10-12h-9z',
+  stop: 'M6 6h12v12H6z',
+  scissors: 'M6 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM6 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM20 4 8.5 15.5M14 14l6 6',
 };
 
 export function Icon({ name, size = 16, color = 'currentColor', strokeWidth = 1.8, fill = 'none' }) {

@@ -22,6 +22,7 @@ export function ProjectLayout({
   onBack,
   onNav,
   context,        // 上下文栏内容（随步骤变化）
+  actions,        // 面包屑右侧的操作按钮（如「一键全自动」）
   children,       // 主工作区内容
 }) {
   return (
@@ -76,6 +77,9 @@ export function ProjectLayout({
           <span style={{
             color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>{projectTitle || '(未命名)'}</span>
+          <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+            {actions}
+          </span>
         </div>
 
         {/* 步骤列表 */}

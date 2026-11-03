@@ -11,8 +11,11 @@ import { generatePanelImage } from '../../lib/image-workflows.js';
 import { ScriptStep, ScriptContext, ArtDirectionStep, ArtContext, AssetsStep, AssetsContext } from './steps1';
 import { StoryboardStep, StoryboardContext, MotionStep, MotionContext, AssemblyStep, AssemblyContext } from './steps2';
 import { VoiceStep, VoiceContext, FinalMixStep, MixContext, ExportStep, ExportContext } from './steps3';
+import { MultiTrackEditor } from './MultiTrackEditor';
 import { InfiniteCanvas } from '../InfiniteCanvas';
 import { collectProjectAssets } from '../InfiniteCanvas/projectAssets';
+import { AutoPipelinePanel } from './AutoPipelinePanel';
+import { Btn, Icon } from './ui';
 // 弹窗
 import {
   EntityModal, WorkbenchModal, CreateSeriesModal, CreateProjectModal, ImportFileModal,
@@ -52,6 +55,7 @@ export function Studio({
   const [workbench, setWorkbench] = useState(null);
   const [dlg, setDlg] = useState(null);            // 'series' | 'project' | 'import'
   const [generating, setGenerating] = useState(null); // 正在生成的槽位 key
+  const [autoOpen, setAutoOpen] = useState(false);     // 一键全自动面板
 
   // 画布可导入的项目素材：角色 / 场景 / 道具 / 分镜首帧与视频 / 素材库，全部汇总。
   // 只读 project.assets 会漏掉资产步骤里生成的图（那些不在 assets 里），导致画布导入面板空。
@@ -181,6 +185,7 @@ export function Studio({
         case 'storyboard': return <StoryboardStep project={project} update={update} log={log} />;
         case 'motion': return <MotionStep project={project} update={update} log={log} />;
         case 'assembly': return <AssemblyStep project={project} update={update} log={log} />;
+        case 'editor': return <MultiTrackEditor project={project} update={update} log={log} />;
         case 'voice': return <VoiceStep project={project} update={update} log={log} />;
         case 'mix': return <FinalMixStep project={project} update={update} log={log} />;
         case 'export': return <ExportStep project={project} update={update} log={log} />;
@@ -196,6 +201,7 @@ export function Studio({
         case 'storyboard': return <StoryboardContext project={project} update={update} log={log} />;
         case 'motion': return <MotionContext project={project} update={update} />;
         case 'assembly': return <AssemblyContext project={project} update={update} log={log} />;
+        case 'editor': return null;
         case 'voice': return <VoiceContext project={project} />;
         case 'mix': return <MixContext project={project} update={update} log={log} />;
         case 'export': return <ExportContext />;
@@ -214,6 +220,11 @@ export function Studio({
           onBack={() => { setInProject(false); setView('workspace'); }}
           onNav={handleNav}
           context={renderContext()}
+          actions={
+            <Btn size="sm" variant="primary" onClick={() => setAutoOpen(true)} title="一键全自动流水线">
+              <Icon name="zap" size={12} />一键全自动
+            </Btn>
+          }
         >
           {renderStep()}
         </ProjectLayout>
@@ -243,6 +254,13 @@ export function Studio({
           }} />
         <WorkbenchModal asset={workbench} onClose={() => setWorkbench(null)} generating={generating}
           onGenerate={handleGenerateImage} onSaveAsset={handleSaveAsset} />
+        <AutoPipelinePanel
+          project={project}
+          update={update}
+          log={log}
+          open={autoOpen}
+          onClose={() => setAutoOpen(false)}
+        />
       </>
     );
   }

@@ -104,6 +104,7 @@ export const T = {
     { id: 'storyboard', n: '04', label: '分镜', icon: 'film' },
     { id: 'motion', n: '05', label: '动态', icon: 'play' },
     { id: 'assembly', n: '06', label: '装配', icon: 'layers' },
+    { id: 'editor', n: '06.5', label: '剪辑台', icon: 'scissors', beta: true },
     { id: 'voice', n: '07', label: '配音', icon: 'mic', beta: true },
     { id: 'mix', n: '08', label: '混音', icon: 'sliders', beta: true },
     { id: 'export', n: '09', label: '导出', icon: 'download', beta: true },
