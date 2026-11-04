@@ -3,7 +3,7 @@ import { StudioShell } from './StudioShell';
 import { WorkspaceView } from './WorkspaceView';
 import { SeriesView } from './SeriesView';
 import { LibraryView, SettingsView } from './OtherViews';
-import { ProjectLayout } from './ProjectLayout';
+import { ProjectLayout, CtxBlock } from './ProjectLayout';
 import { T, defaultModelKey, defaultRatio } from './i18n';
 import { generatePanelImage } from '../../lib/image-workflows.js';
 
@@ -187,6 +187,19 @@ export function Studio({
         case 'motion': return <MotionStep project={project} update={update} log={log} />;
         case 'assembly': return <AssemblyStep project={project} update={update} log={log} />;
         case 'editor': return <MultiTrackEditor project={project} update={update} log={log} />;
+        // 06.6 导演台：主区就是 3D 预演（左控制面板 + 右 three.js 画布）
+        // 保存场景写回 project.director3d，下次进来能恢复布景/机位
+        case 'director': return (
+          <Director3D
+            project={project}
+            update={update}
+            log={log}
+            onExport={(data) => {
+              update?.((p) => ({ ...p, director3d: data }));
+              log?.('导演台布景已保存到项目');
+            }}
+          />
+        );
         case 'voice': return <VoiceStep project={project} update={update} log={log} />;
         case 'mix': return <FinalMixStep project={project} update={update} log={log} />;
         case 'export': return <ExportStep project={project} update={update} log={log} />;
@@ -203,7 +216,29 @@ export function Studio({
         case 'motion': return <MotionContext project={project} update={update} />;
         case 'assembly': return <AssemblyContext project={project} update={update} log={log} />;
         case 'editor': return null;
-        case 'director': return null;
+        case 'director': return (
+          <div>
+            <CtxBlock title="CONTEXT / 3D 导演台">
+              <div style={{ fontSize: 11.5, color: '#4b5563', lineHeight: 1.7 }}>
+                左侧面板搭场景：加角色、摆道具、设机位；右侧画布实时预演。
+              </div>
+            </CtxBlock>
+            <CtxBlock title="操作">
+              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11.5, color: '#4b5563', lineHeight: 1.8 }}>
+                <li>左键拖拽旋转视角</li>
+                <li>右键拖拽平移</li>
+                <li>滚轮缩放</li>
+                <li>点击模型选中后拖动坐标轴</li>
+              </ul>
+            </CtxBlock>
+            <CtxBlock title="出片">
+              <div style={{ fontSize: 11.5, color: '#4b5563', lineHeight: 1.7 }}>
+                「渲染首帧」把当前机位画面作为图生视频的首帧参考；
+                点「保存到项目」把布景写进项目存档，下次进来自动恢复。
+              </div>
+            </CtxBlock>
+          </div>
+        );
         case 'voice': return <VoiceContext project={project} />;
         case 'mix': return <MixContext project={project} update={update} log={log} />;
         case 'export': return <ExportContext />;

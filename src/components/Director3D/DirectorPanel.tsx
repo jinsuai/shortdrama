@@ -1,6 +1,5 @@
 ﻿import { useState } from 'react';
-import { api } from '../../dispatch-jobs.js';
-import { isLoggedIn } from '../../utils/backend-api.js';
+import { generateImage, generateText } from '../../lib/providers/index.js';
 import { saveBlob } from '../../utils.js';
 import {
   User,
@@ -111,24 +110,13 @@ function Vector3Input({
 }
 
 
-// 轮询后端 3D 任务直到完成，返回模型 URL（扣分统一在后端）
-async function poll3DTask(taskId: string, timeoutMs = 600000): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 3000));
-    let t: any;
-    try { t = await api(`/api/3d/task/${taskId}`); } catch (e) { continue; }
-    if (t.status === "SUCCEEDED") return t.model_url || "";
-    if (t.status === "FAILED") throw new Error(t.error || "3D 生成失败");
-  }
-  throw new Error("3D 生成超时");
-}
+// 3D 重建任务（Tripo / H3 等）属云端付费服务，开源版未内置供应商，
+// 原后端轮询逻辑一并移除；如需接入，请在「设置 → 模型配置」扩展一个 3D 供应商后在此实现。
 
 export function DirectorPanel({ project, update, log }: { project?: any; update?: (key: string, value: any) => void; log?: (message: string) => void }) {
   const [sceneList, setSceneList] = useState<{name: string; description: string}[]>([]);
   const [extractingScenes, setExtractingScenes] = useState(false);
   const [generatingSceneImg, setGeneratingSceneImg] = useState(false);
-  const [generatingScene3D, setGeneratingScene3D] = useState(false);
   const [selectedSceneTemplate, setSelectedSceneTemplate] = useState<string>('empty');
   const [showImportCharModal, setShowImportCharModal] = useState(false);
   const {
@@ -487,11 +475,6 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
                 <button
                   onClick={async () => {
                     if (!selectedChar) return;
-                    // 未登录用户不能使用
-                    if (!isLoggedIn()) {
-                      alert("请先登录后再使用3D四视图生成功能");
-                      return;
-                    }
                     try {
                       const hasRefImage = !!selectedChar.imageUrl;
                       const charDesc = `动漫风格角色，角色「${selectedChar.name}」，${selectedChar.outfit || "日常服装"}，${selectedChar.hairColor ? `发色${selectedChar.hairColor}` : "黑色头发"}`;
@@ -504,12 +487,14 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
                       ];
                       const fourViews: any = {};
                       for (const v of views) {
-                        const imgRes = await api("/api/image/generate", {
-                          method: "POST",
-                          body: JSON.stringify({ prompt: `${charDesc}，${v.label}`, model: "Qwen/Qwen-Image", n: 1 }),
+                        // 走「设置 → 图片模型」里用户自备的 API（开源版无后端、无计费）
+                        const imgRes = await generateImage(`${charDesc}，${v.label}`, {
+                          size: "1024x1024",
+                          n: 1,
+                          ...(hasRefImage ? { referenceImage: selectedChar.imageUrl } : {}),
                         });
-                        if (!imgRes?.image_url) throw new Error("四视图图片生成失败");
-                        fourViews[v.key] = imgRes.image_url;
+                        if (!imgRes?.resultUrl) throw new Error("四视图图片生成失败");
+                        fourViews[v.key] = imgRes.resultUrl;
                       }
                       updateCharacter(selectedChar.id, { fourViews });
                       log?.(`「${selectedChar.name}」四视图生成完成${hasRefImage ? '（参考角色图）' : ''}`);
@@ -519,40 +504,22 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
                   }}
                   style={{ width: '100%', padding: '6px', background: selectedChar.imageUrl ? 'linear-gradient(135deg, #10b981, #059669)' : 'linear-gradient(135deg, #6D28D9, #0891B2)', border: 'none', borderRadius: '4px', color: '#fff', cursor: 'pointer', fontSize: '11px' }}
                 >
-                  {selectedChar.imageUrl ? '🎨 参考图生成四视图（8积分）' : '🎨 生成角色四视图（8积分）'}
+                  {selectedChar.imageUrl ? '🎨 参考图生成四视图' : '🎨 生成角色四视图'}
                 </button>
 
                 <button
-                  disabled={!selectedChar.fourViews?.front}
-                  onClick={async () => {
-                    if (!selectedChar?.fourViews?.front) return;
-                    // 未登录用户不能使用
-                    if (!isLoggedIn()) {
-                      alert("请先登录后再使用3D模型生成功能");
-                      return;
-                    }
-                    try {
-                      log?.(`正在为「${selectedChar.name}」生成3D模型...`);
-                      const desc = `动漫角色「${selectedChar.name}」，${selectedChar.outfit || "日常服装"}，${selectedChar.hairColor ? `发色${selectedChar.hairColor}` : "黑色头发"}`;
-                      const genBody: any = { prompt: desc, kind: "character" };
-                      if (selectedChar.fourViews?.front) genBody.image_url = selectedChar.fourViews.front; // 有正面图优先图生3D
-                      const gen = await api("/api/3d/generate", { method: "POST", body: JSON.stringify(genBody) });
-                      if (!gen || !gen.task_id) throw new Error((gen && gen.detail) || "3D 任务创建失败");
-                      const modelUrl = await poll3DTask(gen.task_id);
-                      if (!modelUrl) throw new Error("未返回模型URL");
-                      updateCharacter(selectedChar.id, { modelUrl, modelType: 'ai-generated' });
-                      log?.(`「${selectedChar.name}」3D模型生成完成`);
-                    } catch (e: any) {
-                      log?.(`3D模型生成失败: ${e.message}`);
-                    }
+                  onClick={() => {
+                    // 3D 重建（Tripo / H3 等）是云端付费模型，开源版未内置供应商；
+                    // 不假装能生成，直接说明可行替代方案，避免点了没反应。
+                    alert('开源版未内置 3D 重建模型（Tripo / H3.1 属云端服务）。\n可先用上方「📁 上传模型」导入本地 GLB / GLTF / OBJ 进场景。');
                   }}
-                  style={{ width: '100%', padding: '6px', background: selectedChar.fourViews?.front ? 'linear-gradient(135deg, #f59e0b, #d97706)' : '#333', border: 'none', borderRadius: '4px', color: '#fff', cursor: selectedChar.fourViews?.front ? 'pointer' : 'not-allowed', fontSize: '11px' }}
+                  style={{ width: '100%', padding: '6px', background: '#dbe3f2', border: '1px solid #c7d3e6', borderRadius: '4px', color: '#1f2937', cursor: 'pointer', fontSize: '11px' }}
                 >
-                  🎲 生成3D模型（30积分，Tripo-H3.1）
+                  🎲 生成3D模型（需自备 3D 重建服务）
                 </button>
               </div>
               <div style={{ fontSize: '9px', color: '#555', marginTop: '4px' }}>
-                先生成四视图，再生成3D模型
+                四视图走「设置 → 图片模型」；3D 模型可上传本地 GLB/GLTF
               </div>
             </div>
           </div>
@@ -634,7 +601,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
             background: '#dbe3f2',
             border: 'none',
             borderRadius: '4px',
-            color: '#fff',
+            color: '#1f2937',
             cursor: 'pointer',
             fontSize: '12px',
             marginBottom: '8px',
@@ -652,15 +619,15 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
             onClick={() => setActiveCamera(cam.id)}
             style={{
               padding: '6px 8px',
-              background: activeCameraId === cam.id ? '#3a3a1a' : '#e6ecf8',
+              background: activeCameraId === cam.id ? '#dbe3f2' : '#e6ecf8',
               borderRadius: '4px',
               marginBottom: '4px',
               cursor: 'pointer',
-              border: activeCameraId === cam.id ? '1px solid #ffd700' : 'none',
+              border: activeCameraId === cam.id ? '1px solid #f59e0b' : '1px solid transparent',
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Camera size={12} color={activeCameraId === cam.id ? '#ffd700' : '#888'} />
+              <Camera size={12} color={activeCameraId === cam.id ? '#b45309' : '#888'} />
               <span style={{ fontSize: '12px', flex: 1 }}>{cam.name}</span>
               <button
                 onClick={(e) => {
@@ -679,7 +646,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
         ))}
         {activeCamera && (
           <div style={{ marginTop: '8px', padding: '8px', background: '#f5f7fb', borderRadius: '4px' }}>
-            <div style={{ fontSize: '11px', color: '#ffd700', marginBottom: '6px' }}>
+            <div style={{ fontSize: '11px', color: '#b45309', marginBottom: '6px' }}>
               编辑机位：{activeCamera.name}
             </div>
             <input
@@ -828,11 +795,6 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
               disabled={!scene.selectedEpisodeId || extractingScenes}
               onClick={async () => {
                 if (!scene.selectedEpisodeId) return;
-                // 未登录用户不能使用
-                if (!isLoggedIn()) {
-                  alert("请先登录后再使用AI提取场景功能");
-                  return;
-                }
                 setExtractingScenes(true);
                 try {
                   log?.('正在AI从剧本提取场景列表...');
@@ -848,18 +810,15 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
 
 剧本内容：
 ${episodeContent.substring(0, 3000)}`;
-                  // 走调度机调用LLM API（qwen-turbo模型）
-                  const res = await api("/api/llm/chat", {
-                    method: "POST",
-                    body: JSON.stringify({
-                      model: "qwen-turbo",
-                      messages: [{ role: "user", content: prompt }],
-                      max_tokens: 8192,
-                      llm_type: "scene_extract"
-                    })
-                  });
-                  const content = res.text || "[]";
-                  const parsed = JSON.parse(content);
+                  // 走「设置 → 文本模型」里用户自备的 LLM（开源版无后端、无计费）
+                  const content = await generateText(
+                    [{ role: "user", content: prompt }],
+                    { maxTokens: 4096, temperature: 0.3 },
+                  );
+                  // 模型常把 JSON 包在 ```json 围栏里，先剥掉围栏再解析
+                  const jsonText = String(content || "[]")
+                    .replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim();
+                  const parsed = JSON.parse(jsonText || "[]");
                   const scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || parsed.list || []);
                   setSceneList(scenes);
                   log?.(`提取到 ${scenes.length} 个场景`);
@@ -871,7 +830,7 @@ ${episodeContent.substring(0, 3000)}`;
               }}
               style={{ width: '100%', padding: '6px', background: scene.selectedEpisodeId && !extractingScenes ? 'linear-gradient(135deg, #10b981, #059669)' : '#333', border: 'none', borderRadius: '4px', color: '#fff', cursor: scene.selectedEpisodeId && !extractingScenes ? 'pointer' : 'not-allowed', fontSize: '11px' }}
             >
-              {extractingScenes ? '提取中...' : '🤖 ② AI提取场景列表（1积分）'}
+              {extractingScenes ? '提取中...' : '🤖 ② AI提取场景列表'}
             </button>
           </div>
 
@@ -912,20 +871,13 @@ ${episodeContent.substring(0, 3000)}`;
               disabled={!scene.scenePrompt || generatingSceneImg}
               onClick={async () => {
                 if (!scene.scenePrompt) return;
-                // 未登录用户不能使用
-                if (!isLoggedIn()) {
-                  alert("请先登录后再使用场景概念图生成功能");
-                  return;
-                }
                 setGeneratingSceneImg(true);
                 try {
                   log?.('正在生成场景概念图...');
-                  const imgRes = await api("/api/image/generate", {
-                    method: "POST",
-                    body: JSON.stringify({ prompt: scene.scenePrompt, model: "Qwen/Qwen-Image", n: 1 }),
-                  });
-                  if (!imgRes?.image_url) throw new Error("未返回图片URL");
-                  updateScene({ sceneImageUrl: imgRes.image_url });
+                  // 走「设置 → 图片模型」里用户自备的 API（开源版无后端、无计费）
+                  const imgRes = await generateImage(scene.scenePrompt, { size: "1536x864", n: 1 });
+                  if (!imgRes?.resultUrl) throw new Error("未返回图片URL");
+                  updateScene({ sceneImageUrl: imgRes.resultUrl });
                   log?.('场景概念图生成完成');
                 } catch (e: any) {
                   log?.(`场景图生成失败: ${e.message}`);
@@ -935,43 +887,19 @@ ${episodeContent.substring(0, 3000)}`;
               }}
               style={{ width: '100%', padding: '6px', background: scene.scenePrompt && !generatingSceneImg ? 'linear-gradient(135deg, #6D28D9, #0891B2)' : '#333', border: 'none', borderRadius: '4px', color: '#fff', cursor: scene.scenePrompt && !generatingSceneImg ? 'pointer' : 'not-allowed', fontSize: '11px' }}
             >
-              {generatingSceneImg ? '生成中...' : '🎨 ⑤ 生成场景概念图（3积分）'}
+              {generatingSceneImg ? '生成中...' : '🎨 ⑤ 生成场景概念图'}
             </button>
           </div>
 
           {/* 步骤6：生成3D场景 */}
           <div style={{ marginBottom: '8px' }}>
             <button
-              disabled={!scene.sceneImageUrl || generatingScene3D}
-              onClick={async () => {
-                if (!scene.sceneImageUrl) return;
-                // 未登录用户不能使用
-                if (!isLoggedIn()) {
-                  alert("请先登录后再使用3D场景生成功能");
-                  return;
-                }
-                setGeneratingScene3D(true);
-                try {
-                  log?.('正在生成3D场景模型...');
-                  const genBody: any = { kind: "scene" };
-                  if (scene.sceneImageUrl) genBody.image_url = scene.sceneImageUrl;
-                  else if (scene.scenePrompt) genBody.prompt = scene.scenePrompt;
-                  else throw new Error("缺少场景图或场景描述");
-                  const gen = await api("/api/3d/generate", { method: "POST", body: JSON.stringify(genBody) });
-                  if (!gen || !gen.task_id) throw new Error((gen && gen.detail) || "3D 任务创建失败");
-                  const modelUrl = await poll3DTask(gen.task_id);
-                  if (!modelUrl) throw new Error("未返回模型URL");
-                  updateScene({ sceneModelUrl: modelUrl });
-                  log?.('3D场景模型生成完成');
-                } catch (e: any) {
-                  log?.(`3D场景生成失败: ${e.message}`);
-                } finally {
-                  setGeneratingScene3D(false);
-                }
+              onClick={() => {
+                alert('开源版未内置图生 3D 场景（Tripo / H3.1 属云端服务）。\n已生成的场景概念图可在「资产 → 场景」里继续用，或用场景模板快速搭基础环境。');
               }}
-              style={{ width: '100%', padding: '6px', background: scene.sceneImageUrl && !generatingScene3D ? 'linear-gradient(135deg, #f59e0b, #d97706)' : '#333', border: 'none', borderRadius: '4px', color: '#fff', cursor: scene.sceneImageUrl && !generatingScene3D ? 'pointer' : 'not-allowed', fontSize: '11px' }}
+              style={{ width: '100%', padding: '6px', background: '#dbe3f2', border: '1px solid #c7d3e6', borderRadius: '4px', color: '#1f2937', cursor: 'pointer', fontSize: '11px' }}
             >
-              {generatingScene3D ? '生成中...' : '🎲 ⑥ 生成3D场景（40积分，Tripo-H3.1）'}
+              🎲 ⑥ 生成3D场景（需自备 3D 重建服务）
             </button>
           </div>
 
@@ -1013,7 +941,7 @@ ${episodeContent.substring(0, 3000)}`;
             width: '400px', maxHeight: '80vh', overflow: 'auto',
           }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h3 style={{ margin: 0, color: '#fff', fontSize: '16px' }}>选择要导入的角色</h3>
+              <h3 style={{ margin: 0, color: '#1f2937', fontSize: '16px' }}>选择要导入的角色</h3>
               <button onClick={() => setShowImportCharModal(false)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '20px', cursor: 'pointer' }}>×</button>
             </div>
             <div style={{ fontSize: '11px', color: '#888', marginBottom: '12px' }}>
@@ -1061,7 +989,7 @@ ${episodeContent.substring(0, 3000)}`;
                       </div>
                     )}
                     <div style={{ flex: 1 }}>
-                      <div style={{ color: '#fff', fontSize: '14px', fontWeight: 600 }}>{pc.name}</div>
+                      <div style={{ color: '#1f2937', fontSize: '14px', fontWeight: 600 }}>{pc.name}</div>
                       <div style={{ color: '#888', fontSize: '11px' }}>{pc.gender || '未知'} · {pc.role || pc.personality || '无描述'}</div>
                       {exists && <div style={{ color: '#f59e0b', fontSize: '10px', marginTop: '2px' }}>已导入</div>}
                     </div>

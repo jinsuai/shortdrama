@@ -64,22 +64,23 @@ export function ProjectLayout({
         borderRight: '1px solid rgba(15,23,42,0.096)',
         display: 'flex', flexDirection: 'column',
       }}>
-        {/* 面包屑 */}
+        {/* 面包屑（标题占一行做省略，操作按钮单独一行，避免 190px 栏挤成竖排） */}
         <div style={{
-          padding: '12px 12px 10px', borderBottom: '1px solid rgba(15,23,42,0.096)',
-          fontSize: 11.5, color: '#5b6678', display: 'flex', alignItems: 'center', gap: 5,
+          padding: '10px 10px 8px', borderBottom: '1px solid rgba(15,23,42,0.096)',
+          display: 'flex', flexDirection: 'column', gap: 6,
         }}>
-          <button onClick={onBack} title="返回" style={{
-            background: 'none', border: 'none', color: '#6d28d9', cursor: 'pointer',
-            padding: 0, fontSize: 11.5, fontFamily: 'inherit',
-          }}>{T.brand}</button>
-          <span style={{ color: '#7c8798' }}>›</span>
-          <span style={{
-            color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>{projectTitle || '(未命名)'}</span>
-          <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-            {actions}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, fontSize: 11.5, color: '#5b6678' }}>
+            <button onClick={onBack} title="返回" style={{
+              background: 'none', border: 'none', color: '#6d28d9', cursor: 'pointer',
+              padding: 0, fontSize: 11.5, fontFamily: 'inherit', flexShrink: 0,
+            }}>{T.brand}</button>
+            <span style={{ color: '#7c8798', flexShrink: 0 }}>›</span>
+            <span style={{
+              color: '#374151', minWidth: 0, flex: 1,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }} title={projectTitle || '(未命名)'}>{projectTitle || '(未命名)'}</span>
+          </div>
+          {actions && <div style={{ display: 'flex', alignItems: 'center' }}>{actions}</div>}
         </div>
 
         {/* 步骤列表 */}
@@ -88,9 +89,10 @@ export function ProjectLayout({
             const active = s.id === currentStep;
             return (
               <button key={s.id} onClick={() => onStepChange?.(s.id)}
+                title={`${s.n} ${s.label}`}
                 style={{
-                  width: '100%', display: 'flex', alignItems: 'center', gap: 9,
-                  padding: '8px 9px', border: 'none', borderRadius: 7, textAlign: 'left',
+                  width: '100%', display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '7px 8px', border: 'none', borderRadius: 7, textAlign: 'left',
                   background: active ? 'rgba(109,40,217,.15)' : 'transparent',
                   color: active ? '#6d28d9' : '#5b6678', cursor: 'pointer',
                   fontFamily: 'inherit', marginBottom: 1, position: 'relative', transition: 'all .15s',
@@ -103,14 +105,20 @@ export function ProjectLayout({
                     width: 2, height: 18, background: '#8b5cf6', borderRadius: 1,
                   }} />
                 )}
-                <span style={{ fontSize: 11, color: active ? '#6d28d9' : '#7c8798', fontWeight: 600, width: 14 }}>
+                <span style={{
+                  fontSize: 10.5, color: active ? '#6d28d9' : '#7c8798', fontWeight: 600,
+                  width: 24, flexShrink: 0,
+                }}>
                   {s.n}
                 </span>
-                <span style={{ flex: 1, fontSize: 12.5, fontWeight: active ? 600 : 400 }}>{s.label}</span>
+                <span style={{
+                  flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: active ? 600 : 400,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>{s.label}</span>
                 {s.beta && (
                   <span style={{
-                    fontSize: 9, padding: '1px 5px', borderRadius: 4,
-                    background: 'rgba(245,158,11,.16)', color: '#f59e0b',
+                    fontSize: 8.5, padding: '0 4px', lineHeight: '13px', borderRadius: 4, flexShrink: 0,
+                    background: 'rgba(245,158,11,.16)', color: '#b45309',
                   }}>Beta</span>
                 )}
               </button>

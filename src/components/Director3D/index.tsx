@@ -37,8 +37,15 @@ export function Director3D({
   update,
   log,
 }: Director3DProps) {
-  const { exportScene, exportCameraReference, activeCameraId } = useDirectorStore();
+  const { exportScene, exportCameraReference, activeCameraId, loadScene } = useDirectorStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // 进入导演台时回灌项目里存过的布景/机位（只在切换项目时灌一次，
+  // 否则每次 setState 都会把用户正在拖的东西重置回去）。
+  useEffect(() => {
+    if (project?.director3d) loadScene(project.director3d);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
 
   const handleExport = () => {
     const data = exportScene();
@@ -151,15 +158,15 @@ export function Director3D({
               onClick={handleExport}
               style={{
                 padding: '6px 12px',
-                background: 'rgba(15,23,42,0.16)',
-                border: '1px solid rgba(15,23,42,0.32)',
+                background: 'rgba(255,255,255,.88)',
+                border: '1px solid rgba(15,23,42,0.16)',
                 borderRadius: '6px',
-                color: '#fff',
+                color: '#1f2937',
                 cursor: 'pointer',
                 fontSize: '12px',
               }}
             >
-              💾 保存场景
+              💾 保存到项目
             </button>
           </div>
         </div>

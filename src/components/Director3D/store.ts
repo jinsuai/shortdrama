@@ -53,6 +53,9 @@ interface DirectorStore {
   // 导出
   exportScene: () => object;
   exportCameraReference: (cameraId: string) => object;
+
+  // 从项目存档回灌（project.director3d），再次进入导演台时恢复上次的布景/机位
+  loadScene: (data: any) => void;
 }
 
 export const useDirectorStore = create<DirectorStore>((set, get) => ({
@@ -317,6 +320,23 @@ export const useDirectorStore = create<DirectorStore>((set, get) => ({
       cameras,
       scene,
     };
+  },
+
+  /** 用项目里存过的布景回灌本地 store（只覆盖认识的字段，坏数据不炸画布） */
+  loadScene: (data) => {
+    if (!data || typeof data !== 'object') return;
+    set((s) => ({
+      characters: Array.isArray(data.characters) ? data.characters : s.characters,
+      props: Array.isArray(data.props) ? data.props : s.props,
+      cameras: Array.isArray(data.cameras) ? data.cameras : s.cameras,
+      scene: data.scene && typeof data.scene === 'object' ? { ...s.scene, ...data.scene } : s.scene,
+      showGrid: typeof data.showGrid === 'boolean' ? data.showGrid : s.showGrid,
+      activeCameraId: data.cameras?.some?.((c: any) => c.id === data.activeCameraId)
+        ? data.activeCameraId
+        : null,
+      selectedCharacterId: null,
+      selectedPropId: null,
+    }));
   },
 
   exportCameraReference: (cameraId) => {
