@@ -192,7 +192,9 @@ function normalizeVideoPayload(p = {}) {
   return out;
 }
 
-export async function runDispatchJob({ type, payload = {}, onProgress = () => {}, timeoutMs = 600000, signal } = {}) {
+// timeoutMs 不写死默认值：留空则由 providers 按「设置里的轮询超时 > 全局默认(30min)」决定，
+// 否则这个默认值会当成「显式值」把用户在设置里调长的时长又盖回 10 分钟。
+export async function runDispatchJob({ type, payload = {}, onProgress = () => {}, timeoutMs, signal } = {}) {
   if (type === 'video' || type === 'intro' || type === 'video_shots') {
     // 批量 shots（旧 H3 长视频专属）不在通用视频模型能力内，降级为取首段单生成。
     const chosen = type === 'video_shots' ? (payload.shots?.[0] || payload) : payload;

@@ -7,6 +7,7 @@
  */
 
 import { getModelConfig } from '../lib/providers/index.js';
+import { DEFAULT_POLL_TIMEOUT_MS } from '../lib/providers/poll-timeout.js';
 
 function _cfg() {
   const env = (import.meta && import.meta.env) ? import.meta.env : {};
@@ -137,11 +138,11 @@ export async function query3DTask(taskId) {
  * 等待3D模型生成完成（轮询）
  * @param {string} taskId - 任务ID
  * @param {number} [interval=15000] - 轮询间隔（毫秒），建议15秒
- * @param {number} [timeout=600000] - 超时时间（毫秒），默认10分钟
+ * @param {number} [timeout=DEFAULT_POLL_TIMEOUT_MS] - 超时时间（毫秒），默认 30 分钟（与生成类轮询统一）
  * @param {Function} [onProgress] - 进度回调
  * @returns {Promise<Object>} 生成结果
  */
-export async function waitFor3DCompletion(taskId, interval = 15000, timeout = 600000, onProgress) {
+export async function waitFor3DCompletion(taskId, interval = 15000, timeout = DEFAULT_POLL_TIMEOUT_MS, onProgress) {
   const startTime = Date.now();
 
   return new Promise((resolve, reject) => {
@@ -199,7 +200,7 @@ export async function imageTo3D(imageUrl, options = {}, onProgress) {
     ...options
   });
 
-  return waitFor3DCompletion(taskId, 15000, 600000, onProgress);
+  return waitFor3DCompletion(taskId, 15000, DEFAULT_POLL_TIMEOUT_MS, onProgress);
 }
 
 /**
@@ -227,7 +228,7 @@ export async function multiImageTo3D(views, options = {}, onProgress) {
     ...options
   });
 
-  return waitFor3DCompletion(taskId, 15000, 600000, onProgress);
+  return waitFor3DCompletion(taskId, 15000, DEFAULT_POLL_TIMEOUT_MS, onProgress);
 }
 
 /**
@@ -243,7 +244,7 @@ export async function textTo3D(prompt, options = {}, onProgress) {
     ...options
   });
 
-  return waitFor3DCompletion(taskId, 15000, 600000, onProgress);
+  return waitFor3DCompletion(taskId, 15000, DEFAULT_POLL_TIMEOUT_MS, onProgress);
 }
 
 export default {

@@ -14,6 +14,10 @@ export interface InfiniteCanvasProps {
   projectTitle?: string;
   /** 主程序桥接：把画布生成结果写回项目素材库（走 project setter 自动存盘） */
   onSaveAsset?: (asset: any) => void;
+  /** 主程序桥接：项目分镜列表，用于「从分镜生成画布」与分镜节点双向回流 */
+  shots?: any[];
+  /** 主程序桥接：把画布生成的首帧写回项目 shots[index] */
+  onUpdateShot?: (index: number, patch: any) => void;
 }
 
 /**
@@ -47,8 +51,10 @@ export function InfiniteCanvas({
   assets,
   projectTitle,
   onSaveAsset,
+  shots,
+  onUpdateShot,
 }: InfiniteCanvasProps) {
-  const bridge: CanvasBridge = { assets, projectTitle, onSaveAsset };
+  const bridge: CanvasBridge = { assets, projectTitle, onSaveAsset, shots, onUpdateShot };
   return (
     <div
       className={className}

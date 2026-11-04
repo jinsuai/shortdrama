@@ -8,6 +8,10 @@ export interface CanvasBridge {
   assets?: any[];
   projectTitle?: string;
   onSaveAsset?: (asset: any) => void;
+  /** 项目分镜列表，用于「从分镜生成画布」 */
+  shots?: any[];
+  /** 把画布里生成的首帧写回项目 shots[index]（走 project setter 自动存盘） */
+  onUpdateShot?: (index: number, patch: any) => void;
 }
 
 export const CanvasBridgeContext = createContext<CanvasBridge>({});

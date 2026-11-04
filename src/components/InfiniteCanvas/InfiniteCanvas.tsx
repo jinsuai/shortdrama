@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { saveBlob } from '../../utils.js';
 import {
   ReactFlow,
@@ -9,48 +9,55 @@ import {
   ReactFlowProvider,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import {
-  Play,
-  Plus,
-  Trash2,
-  Download,
-  Upload,
-  Type,
-  Image as ImageIcon,
-  Film,
-  Settings,
-  CheckSquare,
-  ZoomIn,
-  ZoomOut,
-  Maximize,
-} from '../../lib/icons';
+import { Play, Plus, Trash2, Download, Upload } from '../../lib/icons';
 import { useCanvasStore } from './store';
 import { nodeTypes } from './nodes';
-import { NodeType, MODELS } from './types';
+import { NODE_DEFS, MODELS, NodeType, nodeDef } from './types';
 import { useCanvasBridge } from './bridge';
+
+const TB = (bg = '#fff', fg = '#334155', disabled = false): React.CSSProperties => ({
+  padding: '5px 9px', background: bg, border: '1px solid #dde4f0', borderRadius: 6,
+  color: fg, cursor: disabled ? 'not-allowed' : 'pointer', fontSize: 11, fontWeight: 600,
+  display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
+  opacity: disabled ? 0.45 : 1, lineHeight: 1.4,
+});
+const GRAD = (a: string, b: string): React.CSSProperties => ({ ...TB('#fff'), background: `linear-gradient(135deg,${a},${b})`, color: '#fff', border: 'none' });
 
 function CanvasContent() {
   const {
-    nodes,
-    edges,
-    onNodesChange,
-    onEdgesChange,
-    onConnect,
-    addNode,
-    runWorkflow,
-    isRunning,
-    clearCanvas,
-    exportWorkflow,
-    importWorkflow,
+    nodes, edges, onNodesChange, onEdgesChange, onConnect, addNode,
+    runWorkflow, cancelRun, isRunning, runProgress,
+    clearCanvas, exportWorkflow, importWorkflow,
+    undo, redo, past, future, autoLayout, buildFromShots,
+    saveNow, setStorageKey, setResultSink, setShotSink,
+    duplicateNodes, deleteNodes, name, lastMessage, setMessage, savedAt,
   } = useCanvasStore();
 
-  const { assets, projectTitle } = useCanvasBridge();
-  const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
+  const { assets, projectTitle, onSaveAsset, shots, onUpdateShot } = useCanvasBridge();
+  const { screenToFlowPosition, fitView } = useReactFlow();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showAssetPicker, setShowAssetPicker] = useState(false);
   const [assetGroup, setAssetGroup] = useState<string>('全部');
+  const [showCommand, setShowCommand] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+  const [commandIndex, setCommandIndex] = useState(0);
+  const [showHelp, setShowHelp] = useState(false);
+  // 节点库默认收起：展开态宽 152px 会盖住 fitView 后靠左的节点标题。
+  // 工具栏已有「添加节点」下拉覆盖点击添加，拖拽是进阶用法，点开即用。
+  const [showNodePanel, setShowNodePanel] = useState(false);
+
+  // 用 ref 转接回调，避免 Studio 每次 render 传来的内联函数导致
+  // 「setResultSink → store 更新 → 重渲染 → 新函数 → 再 setResultSink」死循环
+  const saveRef = useRef(onSaveAsset);
+  saveRef.current = onSaveAsset;
+  const shotRef = useRef(onUpdateShot);
+  shotRef.current = onUpdateShot;
+
+  useEffect(() => { setStorageKey(projectTitle); }, [projectTitle]);
+  useEffect(() => { setResultSink((a) => saveRef.current?.(a)); }, []);
+  useEffect(() => { setShotSink((i, p) => shotRef.current?.(i, p)); }, []);
 
   const assetList = assets || [];
   const assetGroups = Array.from(new Set(assetList.map((a: any) => a?.group || '素材')));
@@ -59,573 +66,341 @@ function CanvasContent() {
     ? assetList
     : assetList.filter((a: any) => (a?.group || '素材') === activeGroup);
 
-  // 从项目素材库导入：把图/视频生成为对应节点（位置按序号错开，避免叠在一起）
-  const importAssetAsNode = (asset: any, index = 0) => {
-    const col = index % 4;
-    const row = Math.floor(index / 4);
-    const pos = { x: 80 + col * 320, y: 80 + row * 340 };
+  const filteredDefs = useMemo(() => {
+    const q = commandQuery.trim().toLowerCase();
+    if (!q) return NODE_DEFS;
+    return NODE_DEFS.filter((d) =>
+      `${d.label} ${d.desc} ${d.keywords || ''} ${d.type}`.toLowerCase().includes(q));
+  }, [commandQuery]);
 
-    // 提示词条目：直接落成「AI 生成」节点，并预填提示词 + 生成类型 + 模型。
-    // 🔴 之前漏了这条分支——prompt 条目 url 为空，会被下面的 if(!url) return 直接吞掉，点了没反应。
+  // ── 快捷键 ──────────────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+      const mod = e.ctrlKey || e.metaKey;
+      const k = e.key.toLowerCase();
+      if (mod && k === 'k') { e.preventDefault(); setShowCommand((v) => !v); return; }
+      if (mod && k === 's') { e.preventDefault(); saveNow(); return; }
+      if (e.key === 'Escape') {
+        setShowCommand(false); setShowAddMenu(false); setShowAssetPicker(false); setShowHelp(false);
+        return;
+      }
+      if (typing) return;
+      if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+      if (mod && k === 'y') { e.preventDefault(); redo(); return; }
+      if (mod && k === 'd') {
+        e.preventDefault();
+        const ids = nodes.filter((n: any) => n.selected).map((n: any) => n.id);
+        if (ids.length) { duplicateNodes(ids); setMessage(`已复制 ${ids.length} 个节点`); }
+        return;
+      }
+      if (mod && k === 'a') {
+        e.preventDefault();
+        useCanvasStore.setState({ nodes: nodes.map((n: any) => ({ ...n, selected: true })) });
+        return;
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        const ids = nodes.filter((n: any) => n.selected).map((n: any) => n.id);
+        if (ids.length) { e.preventDefault(); deleteNodes(ids); setMessage(`已删除 ${ids.length} 个节点`); }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [nodes, saveNow, undo, redo, duplicateNodes, deleteNodes, setMessage]);
+
+  const notify = (m: string) => setMessage(m);
+
+  const fitSoon = () => window.setTimeout(() => { try { fitView({ padding: 0.2, duration: 450 }); } catch { /* 画布未就绪 */ } }, 90);
+
+  const handleAddNode = (type: NodeType, pos?: { x: number; y: number }) => {
+    addNode(type, pos);
+    setShowAddMenu(false);
+    notify(`已添加「${nodeDef(type).label}」`);
+  };
+
+  const addFromCommand = (type: NodeType) => {
+    addNode(type);
+    setShowCommand(false);
+    setCommandQuery('');
+    setCommandIndex(0);
+    notify(`已添加「${nodeDef(type).label}」`);
+  };
+
+  const handleBuildFromShots = () => {
+    if (!Array.isArray(shots) || !shots.length) {
+      notify('当前项目还没有分镜，请先在「03 分镜」生成');
+      return;
+    }
+    if (nodes.length && !window.confirm(`将用 ${shots.length} 个分镜重建画布，当前 ${nodes.length} 个节点会被替换。继续？`)) return;
+    const n = buildFromShots(shots);
+    notify(`已按 ${n} 个分镜重建画布，点节点上的按钮可直接生成首帧并写回分镜`);
+    fitSoon();
+  };
+
+  const handleAutoLayout = () => { autoLayout(); notify('已按连线依赖自动布局'); fitSoon(); };
+
+  // 从项目素材 / 分镜提示词导入
+  const importAssetAsNode = (asset: any, index = 0) => {
+    const pos = { x: 80 + (index % 4) * 320, y: 80 + Math.floor(index / 4) * 340 };
     if (asset?.type === 'prompt') {
       const ptext = (asset?.promptText || '').trim();
       if (!ptext) return;
       const isVideoPrompt = asset?.promptKind === 'video';
       const generateType = isVideoPrompt ? 'text-to-video' : 'text-to-image';
-      const model = MODELS[generateType]?.[0] || '';
-      const params = isVideoPrompt
-        ? { ratio: '9:16', duration: 5 }
-        : { resolution: '1024x1024' };
       addNode('generate', pos, {
-        prompt: ptext,
-        generateType,
-        model,
-        params,
+        prompt: ptext, generateType,
+        model: MODELS[generateType]?.[0] || '',
+        params: isVideoPrompt ? { ratio: '9:16', duration: 5 } : { resolution: '1024x1024' },
         label: asset?.title || (isVideoPrompt ? '视频提示词' : '首帧提示词'),
       });
       setShowAssetPicker(false);
+      notify(`已导入「${asset?.title || '提示词'}」为生成节点`);
       return;
     }
-
-    const isVideo =
-      asset?.type === 'video' ||
-      /\.(mp4|webm|mov|m3u8|mkv)(\?|#|$)/i.test(asset?.url || asset?.imageUrl || '');
+    const isVideo = asset?.type === 'video' || /\.(mp4|webm|mov|m3u8|mkv)(\?|#|$)/i.test(asset?.url || asset?.imageUrl || '');
     const url = asset?.url || asset?.imageUrl || '';
     if (!url) return;
-    addNode(isVideo ? 'video' : 'image', pos, {
-      url,
-      label: asset?.title || (isVideo ? '视频' : '图片'),
-    });
+    addNode(isVideo ? 'video' : 'image', pos, { url, label: asset?.title || (isVideo ? '视频' : '图片') });
     setShowAssetPicker(false);
+    notify(`已导入「${asset?.title || '素材'}」`);
   };
 
-  // 从本地文件导入图/视频为节点（素材库为空时的兜底路径）
   const handleImportLocal = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    files.forEach((file, i) => {
+    Array.from(e.target.files || []).forEach((file, i) => {
       const url = URL.createObjectURL(file);
-      const isVideo = file.type.startsWith('video/');
-      addNode(isVideo ? 'video' : 'image', { x: 80 + (i % 4) * 320, y: 80 + Math.floor(i / 4) * 340 }, {
-        url,
-        label: file.name,
-      });
+      addNode(file.type.startsWith('video/') ? 'video' : 'image',
+        { x: 80 + (i % 4) * 320, y: 80 + Math.floor(i / 4) * 340 },
+        { url, label: file.name });
     });
     setShowAssetPicker(false);
     if (mediaInputRef.current) mediaInputRef.current.value = '';
+    notify('已从本地导入素材');
   };
 
-  const handleDrop = useCallback(
-    (event: React.DragEvent) => {
-      event.preventDefault();
-      const type = event.dataTransfer.getData('nodeType') as NodeType;
-      if (type) {
-        const position = screenToFlowPosition({
-          x: event.clientX,
-          y: event.clientY,
-        });
-        addNode(type, position);
-      }
-    },
-    [screenToFlowPosition, addNode]
-  );
-
-  const handleDragOver = useCallback((event: React.DragEvent) => {
+  const handleDrop = useCallback((event: React.DragEvent) => {
     event.preventDefault();
-  }, []);
+    const type = event.dataTransfer.getData('nodeType') as NodeType;
+    if (type) {
+      addNode(type, screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+      notify(`已添加「${nodeDef(type).label}」`);
+    }
+  }, [screenToFlowPosition, addNode]);
 
-  const handleAddNode = (type: NodeType) => {
-    addNode(type, { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 });
-    setShowAddMenu(false);
-  };
+  const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); }, []);
 
   const handleExport = () => {
     const data = exportWorkflow();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    void saveBlob('workflow.json', blob);
+    saveBlob(`${name || 'workflow'}.json`, new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    notify('工作流已导出为 JSON');
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        try {
-          const data = JSON.parse(event.target?.result as string);
-          importWorkflow(data);
-        } catch (err) {
-          alert('导入失败：文件格式错误');
-        }
-      };
-      reader.readAsText(file);
-    }
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const ok = importWorkflow(JSON.parse(ev.target?.result as string));
+        notify(ok ? '工作流已导入' : '导入失败：文件里没有有效节点');
+      } catch { notify('导入失败：JSON 格式错误'); }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
-  const addNodeItems = [
-    { type: 'text' as NodeType, label: '文本节点', icon: Type, color: '#4facfe' },
-    { type: 'image' as NodeType, label: '图片节点', icon: ImageIcon, color: '#f093fb' },
-    { type: 'video' as NodeType, label: '视频节点', icon: Film, color: '#667eea' },
-    { type: 'generate' as NodeType, label: 'AI生成节点', icon: Settings, color: '#fa709a' },
-    { type: 'output' as NodeType, label: '输出节点', icon: CheckSquare, color: '#51cf66' },
-  ];
+  const miniMapColor = (node: any) => nodeDef(
+    ({ textNode: 'text', imageNode: 'image', videoNode: 'video', generateNode: 'generate', outputNode: 'output', noteNode: 'note', shotNode: 'shot' } as any)[node.type] || 'text'
+  ).color;
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#f6f8fc' }}>
+    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#f6f8fc', fontFamily: 'inherit' }}>
       {/* 顶部工具栏 */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          height: '48px',
-          background: 'rgba(255,255,255, 0.95)',
-          borderBottom: '1px solid #dde4f0',
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 12px',
-          gap: '8px',
-          zIndex: 10,
-        }}
-      >
-        <div style={{ fontWeight: 700, fontSize: '14px', color: '#fff', marginRight: '16px' }}>
-          🎨 无限画布
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: 50,
+        background: 'rgba(255,255,255,.96)', borderBottom: '1px solid #dde4f0',
+        display: 'flex', alignItems: 'center', padding: '0 12px', gap: 6, zIndex: 10,
+        boxShadow: '0 1px 6px rgba(28,44,80,.05)', overflowX: 'auto',
+      }}>
+        <div style={{ fontWeight: 800, fontSize: 13, color: '#1f2937', marginRight: 4, whiteSpace: 'nowrap' }}>🎨 无限画布</div>
+        <div style={{ fontSize: 10, color: '#94a3b8', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={name}>
+          {name}
         </div>
 
-        {/* 添加节点按钮 */}
+        <div style={{ width: 1, height: 20, background: '#e2e8f0', margin: '0 4px' }} />
+
+        {/* 添加节点 */}
         <div style={{ position: 'relative' }}>
-          <button
-            onClick={() => setShowAddMenu(!showAddMenu)}
-            style={{
-              padding: '6px 12px',
-              background: 'linear-gradient(135deg, #4facfe, #00f2fe)',
-              border: 'none',
-              borderRadius: '6px',
-              color: '#fff',
-              cursor: 'pointer',
-              fontSize: '12px',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-            }}
-          >
-            <Plus size={14} /> 添加节点
+          <button style={GRAD('#4facfe', '#0284c7')} onClick={() => setShowAddMenu(!showAddMenu)}>
+            <Plus size={12} /> 添加节点
           </button>
           {showAddMenu && (
-            <div
-              style={{
-                position: 'absolute',
-                top: '100%',
-                left: 0,
-                marginTop: '4px',
-                background: '#e6ecf8',
-                border: '1px solid #dde4f0',
-                borderRadius: '8px',
-                padding: '4px',
-                minWidth: '160px',
-                zIndex: 100,
-              }}
-            >
-              {addNodeItems.map((item) => (
-                <button
-                  key={item.type}
-                  onClick={() => handleAddNode(item.type)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 10px',
-                    background: 'none',
-                    border: 'none',
-                    borderRadius: '4px',
-                    color: '#fff',
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    textAlign: 'left',
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = '#dbe3f2')}
+            <div style={{
+              position: 'absolute', top: '100%', left: 0, marginTop: 6, width: 220,
+              background: '#fff', border: '1px solid #dde4f0', borderRadius: 10, padding: 5,
+              boxShadow: '0 12px 32px rgba(28,44,80,.16)', zIndex: 100,
+            }}>
+              {NODE_DEFS.map((d) => (
+                <button key={d.type} onClick={() => handleAddNode(d.type)} style={{
+                  width: '100%', padding: '7px 8px', background: 'none', border: 'none',
+                  borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left',
+                }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = '#f1f5f9')}
                   onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
                 >
-                  <item.icon size={14} color={item.color} />
-                  {item.label}
+                  <span style={{ fontSize: 15 }}>{d.icon}</span>
+                  <span style={{ flex: 1 }}>
+                    <span style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#1f2937' }}>{d.label}</span>
+                    <span style={{ display: 'block', fontSize: 10, color: '#94a3b8' }}>{d.desc}</span>
+                  </span>
                 </button>
               ))}
             </div>
           )}
         </div>
 
-        <div style={{ flex: 1 }} />
+        <button title="撤销 (Ctrl+Z)" style={TB()} disabled={!past.length} onClick={undo}>↶ 撤销</button>
+        <button title="重做 (Ctrl+Shift+Z)" style={TB()} disabled={!future.length} onClick={redo}>↷ 重做</button>
+        <button title="按连线依赖自动排布" style={TB()} onClick={handleAutoLayout}>✧ 自动布局</button>
+        <button title="把项目分镜一键搬进画布" style={TB('#f5f3ff', '#6d28d9')} onClick={handleBuildFromShots}>🎞️ 从分镜生成</button>
 
-        {/* 从素材库导入：按钮始终可点，素材为空时在面板里给出说明 + 本地导入兜底 */}
+        {/* 素材库导入 */}
         <div style={{ position: 'relative' }}>
-          <button
-            onClick={() => setShowAssetPicker(!showAssetPicker)}
-            style={{
-              padding: '6px 12px',
-              background: 'linear-gradient(135deg, #a18cd1, #fbc2eb)',
-              border: 'none',
-              borderRadius: '6px',
-              color: '#fff',
-              cursor: 'pointer',
-              fontSize: '12px',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-            }}
-            title={
-              assetList.length
-                ? `从项目素材 / 分镜提示词导入（${assetList.length} 项）`
-                : '项目暂无素材，可在面板内改为从本地导入'
-            }
-          >
-            <Download size={14} style={{ transform: 'rotate(180deg)' }} /> 从素材库导入
-            <span
-              style={{
-                background: 'rgba(255,255,255,.28)',
-                borderRadius: '8px',
-                padding: '0 5px',
-                fontSize: '10px',
-                lineHeight: '14px',
-              }}
-            >
-              {assetList.length}
-            </span>
+          <button style={TB('#fdf4ff', '#a21caf')} onClick={() => setShowAssetPicker(!showAssetPicker)}
+            title={assetList.length ? `从项目素材 / 分镜提示词导入（${assetList.length} 项）` : '项目暂无素材，可在面板内本地导入'}>
+            <Download size={12} style={{ transform: 'rotate(180deg)' }} /> 素材库
+            <span style={{ background: 'rgba(139,92,246,.14)', borderRadius: 8, padding: '0 5px', fontSize: 10 }}>{assetList.length}</span>
           </button>
           {showAssetPicker && (
-            <div
-              style={{
-                position: 'absolute',
-                top: '100%',
-                right: 0,
-                marginTop: '6px',
-                width: '340px',
-                background: '#fff',
-                border: '1px solid #dde4f0',
-                borderRadius: '10px',
-                boxShadow: '0 12px 32px rgba(28,44,80,.14)',
-                zIndex: 100,
-                overflow: 'hidden',
-              }}
-            >
-              {/* 头部：来源 + 本地导入兜底 */}
-              <div
-                style={{
-                  padding: '10px 12px',
-                  borderBottom: '1px solid #eef2fb',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                }}
-              >
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#2b3a5b' }}>项目素材</div>
-                <div style={{ fontSize: '11px', color: '#8a94ab' }}>
-                  {projectTitle ? `${projectTitle} · ` : ''}
-                  {assetList.length} 项
-                </div>
+            <div style={{
+              position: 'absolute', top: '100%', right: 0, marginTop: 6, width: 340,
+              background: '#fff', border: '1px solid #dde4f0', borderRadius: 10,
+              boxShadow: '0 12px 32px rgba(28,44,80,.16)', zIndex: 100, overflow: 'hidden',
+            }}>
+              <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2fb', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#1f2937' }}>项目素材</div>
+                <div style={{ fontSize: 10, color: '#94a3b8' }}>{projectTitle ? `${projectTitle} · ` : ''}{assetList.length} 项</div>
                 <div style={{ flex: 1 }} />
-                <button
-                  onClick={() => mediaInputRef.current?.click()}
-                  style={{
-                    padding: '3px 8px',
-                    background: '#eef2fb',
-                    border: '1px solid #dde4f0',
-                    borderRadius: '5px',
-                    color: '#3d4d6b',
-                    cursor: 'pointer',
-                    fontSize: '11px',
-                  }}
-                >
-                  本地导入
-                </button>
+                <button style={TB()} onClick={() => mediaInputRef.current?.click()}>本地导入</button>
               </div>
-
               {assetList.length === 0 ? (
                 <div style={{ padding: '22px 18px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '26px' }}>🗂</div>
-                  <div style={{ fontSize: '12px', color: '#2b3a5b', fontWeight: 600, marginTop: '6px' }}>
-                    这个项目里还没有图 / 视频素材
+                  <div style={{ fontSize: 26 }}>🗂️</div>
+                  <div style={{ fontSize: 12, color: '#1f2937', fontWeight: 700, marginTop: 6 }}>项目里还没有图 / 视频素材</div>
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4, lineHeight: 1.7 }}>
+                    素材来自「资产」里生成的角色 / 场景 / 道具图，<br />以及「分镜」里的首帧图与视频。
                   </div>
-                  <div style={{ fontSize: '11px', color: '#8a94ab', marginTop: '4px', lineHeight: 1.7 }}>
-                    素材来自「资产」里生成的角色 / 场景 / 道具图，
-                    <br />
-                    以及「分镜」里生成的首帧图与视频。
-                  </div>
-                  <button
-                    onClick={() => mediaInputRef.current?.click()}
-                    style={{
-                      marginTop: '12px',
-                      padding: '6px 14px',
-                      background: 'linear-gradient(135deg, #a18cd1, #fbc2eb)',
-                      border: 'none',
-                      borderRadius: '6px',
-                      color: '#fff',
-                      cursor: 'pointer',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                    }}
-                  >
+                  <button style={{ ...GRAD('#a18cd1', '#fbc2eb'), marginTop: 12, display: 'inline-flex' }} onClick={() => mediaInputRef.current?.click()}>
                     从本地选择图片 / 视频
                   </button>
                 </div>
               ) : (
                 <>
-                  {/* 分组筛选 */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      gap: '4px',
-                      padding: '8px 10px',
-                      flexWrap: 'wrap',
-                      borderBottom: '1px solid #f3f6fc',
-                    }}
-                  >
+                  <div style={{ display: 'flex', gap: 4, padding: '8px 10px', flexWrap: 'wrap', borderBottom: '1px solid #f3f6fc' }}>
                     {['全部', ...assetGroups].map((g) => {
                       const on = activeGroup === g;
                       const count = g === '全部' ? assetList.length : assetList.filter((a: any) => (a?.group || '素材') === g).length;
                       return (
-                        <button
-                          key={g}
-                          onClick={() => setAssetGroup(g)}
-                          style={{
-                            padding: '2px 8px',
-                            borderRadius: '10px',
-                            border: '1px solid ' + (on ? '#a18cd1' : '#e3e9f5'),
-                            background: on ? '#f3eefc' : '#fff',
-                            color: on ? '#6b46c1' : '#7a86a1',
-                            fontSize: '11px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          {g} {count}
-                        </button>
+                        <button key={g} onClick={() => setAssetGroup(g)} style={{
+                          padding: '2px 8px', borderRadius: 10,
+                          border: '1px solid ' + (on ? '#a18cd1' : '#e3e9f5'),
+                          background: on ? '#f3eefc' : '#fff', color: on ? '#6b46c1' : '#64748b',
+                          fontSize: 10, cursor: 'pointer',
+                        }}>{g} {count}</button>
                       );
                     })}
                   </div>
-
-                  <div
-                    style={{
-                      maxHeight: '320px',
-                      overflowY: 'auto',
-                      padding: '8px',
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 1fr',
-                      gap: '8px',
-                    }}
-                  >
+                  <div style={{ maxHeight: 300, overflowY: 'auto', padding: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                     {shownAssets.map((a: any, i: number) => {
                       const url = a?.url || a?.imageUrl || '';
-                      const title = a?.title || ('素材 ' + (i + 1));
+                      const title = a?.title || `素材 ${i + 1}`;
                       const isPrompt = a?.type === 'prompt';
                       const isVideo = !isPrompt && (a?.type === 'video' || /\.(mp4|webm|mov|m3u8|mkv)(\?|#|$)/i.test(url));
                       return (
-                        <button
-                          key={a?.id || i}
-                          onClick={() => importAssetAsNode(a, i)}
-                          style={{
-                            background: 'none',
-                            border: '1px solid #dde4f0',
-                            borderRadius: '6px',
-                            padding: '4px',
-                            cursor: 'pointer',
-                            textAlign: 'left',
-                          }}
-                          title={title}
-                        >
-                          <div
-                            style={{
-                              width: '100%',
-                              height: '70px',
-                              borderRadius: '4px',
-                              overflow: 'hidden',
-                              background: isPrompt ? '#fff7e0' : '#000',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              position: 'relative',
-                            }}
-                          >
-                            {isPrompt ? (
-                              <>
-                                <div
-                                  style={{
-                                    position: 'absolute',
-                                    top: 4,
-                                    left: 4,
-                                    background: '#fee140',
-                                    color: '#333',
-                                    borderRadius: '4px',
-                                    fontSize: '9px',
-                                    padding: '1px 4px',
-                                    fontWeight: 700,
-                                  }}
-                                >
-                                  {a?.promptKind === 'video' ? '视频提示词' : '首帧提示词'}
+                        <button key={a?.id || i} onClick={() => importAssetAsNode(a, i)} title={title}
+                          style={{ background: 'none', border: '1px solid #dde4f0', borderRadius: 6, padding: 4, cursor: 'pointer', textAlign: 'left' }}>
+                          <div style={{ width: '100%', height: 66, borderRadius: 4, overflow: 'hidden', background: isPrompt ? '#fff7e0' : '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            {isPrompt
+                              ? <div style={{ fontSize: 10, color: '#78350f', padding: 6, lineHeight: 1.4, maxHeight: 60, overflow: 'hidden', alignSelf: 'flex-start' }}>
+                                  {a?.promptKind === 'video' ? '🎬 ' : '📝 '}{(a?.promptText || '').slice(0, 58)}
                                 </div>
-                                <div
-                                  style={{
-                                    fontSize: '10px',
-                                    color: '#2b3a5b',
-                                    padding: '6px',
-                                    lineHeight: 1.4,
-                                    overflow: 'hidden',
-                                    maxHeight: '62px',
-                                    textAlign: 'left',
-                                    whiteSpace: 'pre-wrap',
-                                  }}
-                                >
-                                  {(a?.promptText || '').slice(0, 60)}
-                                </div>
-                              </>
-                            ) : url ? (
-                              isVideo ? (
-                                <>
-                                  <video src={url} muted preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                  <Film size={18} color="#fff" style={{ position: 'absolute', left: 6, bottom: 6 }} />
-                                </>
-                              ) : (
-                                <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                              )
-                            ) : (
-                              <ImageIcon size={28} color="#aaa" />
-                            )}
+                              : url
+                                ? isVideo
+                                  ? <video src={url} muted preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                  : <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                : <span style={{ color: '#94a3b8', fontSize: 20 }}>🖼️</span>}
                           </div>
-                          <div
-                            style={{
-                              fontSize: '10px',
-                              color: '#555',
-                              marginTop: '4px',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                            }}
-                          >
-                            {isPrompt ? '✏️ ' : isVideo ? '🎬 ' : '🖼 '}
-                            {title}
+                          <div style={{ fontSize: 10, color: '#475569', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {isPrompt ? '✏️ ' : isVideo ? '🎬 ' : '🖼️ '}{title}
                           </div>
                         </button>
                       );
                     })}
                   </div>
-                  <div
-                    style={{
-                      padding: '6px 12px',
-                      borderTop: '1px solid #f3f6fc',
-                      fontSize: '10px',
-                      color: '#8a94ab',
-                    }}
-                  >
-                    点击任意素材即在画布生成对应节点
-                  </div>
+                  <div style={{ padding: '6px 12px', borderTop: '1px solid #f3f6fc', fontSize: 10, color: '#94a3b8' }}>点击任意素材即在画布生成对应节点</div>
                 </>
               )}
             </div>
           )}
         </div>
 
-        {/* 运行按钮 */}
-        <button
-          onClick={runWorkflow}
-          disabled={isRunning}
-          style={{
-            padding: '6px 16px',
-            background: isRunning ? '#333' : 'linear-gradient(135deg, #51cf66, #94d82d)',
-            border: 'none',
-            borderRadius: '6px',
-            color: '#fff',
-            cursor: isRunning ? 'not-allowed' : 'pointer',
-            fontSize: '12px',
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-          }}
-        >
-          <Play size={14} />
-          {isRunning ? '运行中...' : '运行全部'}
-        </button>
+        <div style={{ flex: 1 }} />
 
-        <button
-          onClick={handleExport}
-          style={{ padding: '6px', background: '#dbe3f2', border: 'none', borderRadius: '6px', color: '#fff', cursor: 'pointer' }}
-          title="导出工作流"
-        >
-          <Download size={14} />
-        </button>
-
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          style={{ padding: '6px', background: '#dbe3f2', border: 'none', borderRadius: '6px', color: '#fff', cursor: 'pointer' }}
-          title="导入工作流"
-        >
-          <Upload size={14} />
-        </button>
+        <button title="命令面板 (Ctrl+K)" style={TB()} onClick={() => setShowCommand(true)}>⌘K</button>
+        <button title="快捷键说明" style={TB()} onClick={() => setShowHelp(true)}>❔</button>
+        {isRunning
+          ? <button style={GRAD('#ef4444', '#b91c1c')} onClick={cancelRun}>⏹ 停止 {runProgress ? `(${runProgress.done}/${runProgress.total})` : ''}</button>
+          : <button style={GRAD('#51cf66', '#16a34a')} onClick={runWorkflow}><Play size={12} /> 运行全部</button>}
+        <button title="保存到浏览器 (Ctrl+S)" style={TB()} onClick={() => { saveNow(); notify('画布已保存'); }}>💾</button>
+        <button title="导出工作流 JSON" style={TB()} onClick={handleExport}><Download size={12} /></button>
+        <button title="导入工作流 JSON" style={TB()} onClick={() => fileInputRef.current?.click()}><Upload size={12} /></button>
+        <button title="清空画布" style={{ ...TB(), color: '#ef4444' }} onClick={() => { if (window.confirm('确定清空画布吗？')) { clearCanvas(); notify('画布已清空'); } }}><Trash2 size={12} /></button>
         <input ref={fileInputRef} type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
-        <input
-          ref={mediaInputRef}
-          type="file"
-          accept="image/*,video/*"
-          multiple
-          onChange={handleImportLocal}
-          style={{ display: 'none' }}
-        />
-
-        <button
-          onClick={() => {
-            if (confirm('确定清空画布吗？')) clearCanvas();
-          }}
-          style={{ padding: '6px', background: '#dbe3f2', border: 'none', borderRadius: '6px', color: '#f5576c', cursor: 'pointer' }}
-          title="清空画布"
-        >
-          <Trash2 size={14} />
-        </button>
+        <input ref={mediaInputRef} type="file" accept="image/*,video/*" multiple onChange={handleImportLocal} style={{ display: 'none' }} />
       </div>
 
-      {/* 左侧节点面板（可拖拽） */}
-      <div
-        style={{
-          position: 'absolute',
-          top: '60px',
-          left: '12px',
-          width: '140px',
-          background: 'rgba(255,255,255, 0.9)',
-          border: '1px solid #dde4f0',
-          borderRadius: '8px',
-          padding: '8px',
-          zIndex: 5,
-        }}
-      >
-        <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px', fontWeight: 600 }}>
-          拖拽节点到画布
-        </div>
-        {addNodeItems.map((item) => (
-          <div
-            key={item.type}
-            draggable
-            onDragStart={(e) => e.dataTransfer.setData('nodeType', item.type)}
-            style={{
-              padding: '8px',
-              background: '#e6ecf8',
-              border: `1px solid ${item.color}33`,
-              borderRadius: '6px',
-              marginBottom: '6px',
-              cursor: 'grab',
-              fontSize: '11px',
-              color: '#fff',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-            }}
-          >
-            <item.icon size={12} color={item.color} />
-            {item.label}
+      {/* 左侧节点库：可折叠，默认收起以免遮挡靠左的节点；展开后可拖拽到画布 */}
+      {showNodePanel ? (
+        <div style={{
+          position: 'absolute', top: 62, left: 12, width: 152,
+          background: 'rgba(255,255,255,.97)', border: '1px solid #dde4f0', borderRadius: 10,
+          padding: 8, zIndex: 5, boxShadow: '0 8px 22px rgba(28,44,80,.14)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+            <div style={{ fontSize: 10, color: '#64748b', fontWeight: 700, flex: 1 }}>拖拽或点击添加节点</div>
+            <button onClick={() => setShowNodePanel(false)} title="收起节点库"
+              style={{ ...TB(), padding: '1px 6px', fontSize: 12 }}>«</button>
           </div>
-        ))}
-      </div>
+          {NODE_DEFS.map((d) => (
+            <div key={d.type} draggable
+              onDragStart={(e) => e.dataTransfer.setData('nodeType', d.type)}
+              onClick={() => handleAddNode(d.type)}
+              title={d.desc}
+              style={{
+                padding: '7px 8px', background: '#fff', border: '1px solid #e6ecf8',
+                borderLeft: `3px solid ${d.color}`, borderRadius: 6, marginBottom: 5,
+                cursor: 'grab', fontSize: 11, color: '#334155', display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+              <span style={{ fontSize: 13 }}>{d.icon}</span>{d.label}
+            </div>
+          ))}
+          <div style={{ fontSize: 9, color: '#94a3b8', marginTop: 6, lineHeight: 1.5 }}>Shift 拖拽框选 · Ctrl+K 快速添加</div>
+        </div>
+      ) : (
+        <button onClick={() => setShowNodePanel(true)} title="展开节点库（可拖拽到画布）"
+          style={{
+            position: 'absolute', top: 62, left: 12, width: 34, zIndex: 5,
+            background: 'rgba(255,255,255,.97)', border: '1px solid #dde4f0', borderRadius: 8,
+            padding: '9px 6px', boxShadow: '0 4px 14px rgba(28,44,80,.10)', cursor: 'pointer',
+            color: '#475569', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+          }}>
+          <span style={{ fontSize: 14, lineHeight: 1 }}>☰</span>
+          <span style={{ writingMode: 'vertical-rl' as any, letterSpacing: 2, fontSize: 10, fontWeight: 700 }}>节点库</span>
+        </button>
+      )}
 
       {/* 画布 */}
-      <div style={{ position: 'absolute', top: '48px', left: 0, right: 0, bottom: 0 }}>
+      <div style={{ position: 'absolute', top: 50, left: 0, right: 0, bottom: 0 }}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -636,56 +411,124 @@ function CanvasContent() {
           onDragOver={handleDragOver}
           nodeTypes={nodeTypes}
           fitView
-          colorMode="dark"
+          colorMode="light"
+          minZoom={0.2}
+          maxZoom={2.5}
           defaultEdgeOptions={{ animated: true, style: { stroke: '#4facfe', strokeWidth: 2 } }}
+          proOptions={{ hideAttribution: true }}
         >
-          <Background color="#dbe3f2" gap={20} size={1} />
-          <Controls
-            style={{ background: '#e6ecf8', border: '1px solid #dde4f0', borderRadius: '8px' }}
-            showInteractive={false}
-          >
-            <button onClick={() => zoomIn()} style={{ color: '#fff', background: 'none', border: 'none', cursor: 'pointer', padding: '8px' }}>
-              <ZoomIn size={14} />
-            </button>
-            <button onClick={() => zoomOut()} style={{ color: '#fff', background: 'none', border: 'none', cursor: 'pointer', padding: '8px' }}>
-              <ZoomOut size={14} />
-            </button>
-            <button onClick={() => fitView()} style={{ color: '#fff', background: 'none', border: 'none', cursor: 'pointer', padding: '8px' }}>
-              <Maximize size={14} />
-            </button>
-          </Controls>
+          <Background variant="dots" gap={20} size={1} color="#cbd5e1" />
+          <Controls showInteractive={false} style={{ background: '#fff', border: '1px solid #dde4f0', borderRadius: 8, boxShadow: '0 4px 14px rgba(28,44,80,.08)' }} />
           <MiniMap
-            style={{ background: '#e6ecf8', border: '1px solid #dde4f0', borderRadius: '8px' }}
-            nodeColor={(node) => {
-              if (node.type === 'textNode') return '#4facfe';
-              if (node.type === 'imageNode') return '#f093fb';
-              if (node.type === 'videoNode') return '#667eea';
-              if (node.type === 'generateNode') return '#fa709a';
-              if (node.type === 'outputNode') return '#51cf66';
-              return '#888';
-            }}
-            maskColor="rgba(0,0,0,0.7)"
+            pannable zoomable
+            style={{ background: '#fff', border: '1px solid #dde4f0', borderRadius: 8 }}
+            nodeColor={miniMapColor}
+            maskColor="rgba(15,23,42,.10)"
           />
         </ReactFlow>
+
+        {/* 空画布引导 */}
+        {nodes.length === 0 && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 4 }}>
+            <div style={{
+              pointerEvents: 'auto', background: '#fff', border: '1px solid #dde4f0', borderRadius: 14,
+              padding: '26px 30px', textAlign: 'center', boxShadow: '0 16px 44px rgba(28,44,80,.14)', maxWidth: 380,
+            }}>
+              <div style={{ fontSize: 34 }}>🎨</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: '#1f2937', marginTop: 8 }}>画布还是空的</div>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, lineHeight: 1.7 }}>
+                拖左侧节点到画布，或按 Ctrl+K 搜索添加。<br />也可以直接把项目分镜搬进来，按镜头顺序可视化整场戏。
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 16, flexWrap: 'wrap' }}>
+                <button style={GRAD('#4facfe', '#0284c7')} onClick={() => setShowCommand(true)}>➕ 添加第一个节点</button>
+                <button style={TB('#f5f3ff', '#6d28d9')} onClick={handleBuildFromShots}>🎞️ 从项目分镜生成</button>
+                <button style={TB()} onClick={() => fileInputRef.current?.click()}>📥 导入工作流</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 底部状态栏 */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: '8px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: 'rgba(0,0,0,0.7)',
-          padding: '4px 12px',
-          borderRadius: '4px',
-          fontSize: '11px',
-          color: '#888',
-          zIndex: 5,
-        }}
-      >
-        节点: {nodes.length} · 连线: {edges.length} · 拖拽左侧节点到画布 · 可从项目素材库导入图/视频 · 生成结果可存回素材库
+      <div style={{
+        position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)',
+        background: 'rgba(15,23,42,.86)', padding: '5px 12px', borderRadius: 20,
+        fontSize: 10.5, color: '#e2e8f0', zIndex: 5, display: 'flex', alignItems: 'center', gap: 10,
+        maxWidth: '92%', whiteSpace: 'nowrap', overflow: 'hidden',
+      }}>
+        <span>节点 <b style={{ color: '#7dd3fc' }}>{nodes.length}</b> · 连线 <b style={{ color: '#7dd3fc' }}>{edges.length}</b></span>
+        {isRunning && runProgress && <span style={{ color: '#fde68a' }}>▶ {runProgress.done}/{runProgress.total} {runProgress.label}</span>}
+        {savedAt && <span style={{ color: '#94a3b8' }}>已自动保存</span>}
+        {lastMessage && <span style={{ color: '#86efac', maxWidth: 340, overflow: 'hidden', textOverflow: 'ellipsis' }}>{lastMessage}</span>}
+        <span style={{ color: '#64748b' }}>Ctrl+K 添加节点 · ❔ 快捷键</span>
       </div>
+
+      {/* 命令面板 */}
+      {showCommand && (
+        <div onClick={() => setShowCommand(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,.28)', zIndex: 200, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 90 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 460, maxWidth: '90%', background: '#fff', borderRadius: 12, boxShadow: '0 24px 64px rgba(15,23,42,.28)', overflow: 'hidden' }}>
+            <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f8' }}>
+              <input
+                autoFocus value={commandQuery}
+                onChange={(e) => { setCommandQuery(e.target.value); setCommandIndex(0); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowDown') { e.preventDefault(); setCommandIndex((i) => Math.min(filteredDefs.length - 1, i + 1)); }
+                  else if (e.key === 'ArrowUp') { e.preventDefault(); setCommandIndex((i) => Math.max(0, i - 1)); }
+                  else if (e.key === 'Enter') { e.preventDefault(); if (filteredDefs[commandIndex]) addFromCommand(filteredDefs[commandIndex].type); }
+                  else if (e.key === 'Escape') setShowCommand(false);
+                }}
+                placeholder="搜索节点类型，回车添加…"
+                style={{ width: '100%', boxSizing: 'border-box', border: 'none', outline: 'none', fontSize: 14, color: '#1f2937', padding: '4px 2px' }}
+              />
+            </div>
+            <div style={{ maxHeight: 320, overflowY: 'auto', padding: 6 }}>
+              {filteredDefs.length === 0 && <div style={{ padding: 20, textAlign: 'center', fontSize: 12, color: '#94a3b8' }}>没有匹配的节点类型</div>}
+              {filteredDefs.map((d, i) => (
+                <button key={d.type} onClick={() => addFromCommand(d.type)}
+                  onMouseEnter={() => setCommandIndex(i)}
+                  style={{
+                    width: '100%', padding: '9px 10px', border: 'none', borderRadius: 8, cursor: 'pointer',
+                    background: i === commandIndex ? '#eff6ff' : 'transparent',
+                    display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left',
+                  }}>
+                  <span style={{ fontSize: 18 }}>{d.icon}</span>
+                  <span style={{ flex: 1 }}>
+                    <span style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#1f2937' }}>{d.label}</span>
+                    <span style={{ display: 'block', fontSize: 10, color: '#94a3b8', marginTop: 2 }}>{d.desc}</span>
+                  </span>
+                  {i === commandIndex && <kbd style={{ fontSize: 10, color: '#94a3b8', border: '1px solid #e2e8f0', borderRadius: 4, padding: '1px 5px' }}>↵</kbd>}
+                </button>
+              ))}
+            </div>
+            <div style={{ padding: '7px 12px', borderTop: '1px solid #eef2f8', fontSize: 10, color: '#94a3b8' }}>↑↓ 选择 · ↵ 添加 · Esc 关闭</div>
+          </div>
+        </div>
+      )}
+
+      {/* 快捷键说明 */}
+      {showHelp && (
+        <div onClick={() => setShowHelp(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,.28)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 380, background: '#fff', borderRadius: 12, padding: 20, boxShadow: '0 24px 64px rgba(15,23,42,.28)' }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: '#1f2937', marginBottom: 12 }}>⌨️ 画布快捷键</div>
+            {[
+              ['Ctrl / ⌘ + K', '打开命令面板，搜索添加节点'],
+              ['Ctrl / ⌘ + Z', '撤销'],
+              ['Ctrl / ⌘ + Shift + Z', '重做'],
+              ['Ctrl / ⌘ + D', '复制选中节点'],
+              ['Ctrl / ⌘ + A', '全选节点'],
+              ['Ctrl / ⌘ + S', '保存画布'],
+              ['Delete / Backspace', '删除选中节点'],
+              ['Shift + 拖拽', '框选多个节点'],
+            ].map(([k, v]) => (
+              <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '5px 0', borderBottom: '1px solid #f1f5f9', fontSize: 11 }}>
+                <kbd style={{ color: '#1f2937', fontWeight: 700 }}>{k}</kbd>
+                <span style={{ color: '#64748b' }}>{v}</span>
+              </div>
+            ))}
+            <button style={{ ...GRAD('#4facfe', '#0284c7'), marginTop: 14, width: '100%', justifyContent: 'center' }} onClick={() => setShowHelp(false)}>知道了</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

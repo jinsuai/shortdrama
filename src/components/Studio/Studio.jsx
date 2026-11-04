@@ -194,10 +194,9 @@ export function Studio({
             project={project}
             update={update}
             log={log}
-            onExport={(data) => {
-              update?.((p) => ({ ...p, director3d: data }));
-              log?.('导演台布景已保存到项目');
-            }}
+            // 保存统一由 Director3D 内部写回项目（含构图抽帧），这里只做通知，
+            // 避免二次用不含 frames 的 data 整体覆盖、把已抽的构图清掉
+            onExport={() => log?.('导演台布景已保存到项目')}
           />
         );
         case 'voice': return <VoiceStep project={project} update={update} log={log} />;
@@ -252,6 +251,7 @@ export function Studio({
       <>
         <ProjectLayout
           projectTitle={project.title}
+          project={project}
           currentStep={step}
           onStepChange={setStep}
           onBack={() => { setInProject(false); setView('workspace'); }}
@@ -348,11 +348,16 @@ export function Studio({
           style={{ position: 'absolute', inset: 0 }}
           assets={canvasAssets}
           projectTitle={project?.title}
+          shots={project?.shots || []}
           onSaveAsset={
             project
               ? (asset) => update((p) => ({ ...p, assets: [asset, ...(p.assets || [])] }))
               : undefined
           }
+          onUpdateShot={(i, patch) => update((p) => ({
+            ...p,
+            shots: (p.shots || []).map((s, idx) => (idx === i ? { ...s, ...patch } : s)),
+          }))}
         />
       )}
       {view === 'settings' && (

@@ -8,6 +8,8 @@
 //   - endpoint：覆盖默认路径（视频/音乐等非标准模态用），可为相对路径或完整 URL
 //   - pollPath：任务型接口（先返回 id 再轮询）的轮询路径，{id} 会被替换
 
+import { DEFAULT_POLL_TIMEOUT_MS, timeoutMinutes } from './poll-timeout.js';
+
 const DEFAULT_BASE = 'https://api.openai.com/v1';
 
 function resolveBase(baseUrl) {
@@ -181,7 +183,7 @@ export async function callImage({
 /** 视频 / 音乐等媒体生成：支持「立即返回地址」与「任务型轮询」两种形态 */
 export async function callMedia({
   baseUrl, apiKey, model, endpoint, pollPath = '', payload = {},
-  timeoutMs = 600000, onProgress, signal,
+  timeoutMs = DEFAULT_POLL_TIMEOUT_MS, onProgress, signal,
   retries = 5, retryBaseMs = 8000, authScheme, sendModel = true,
 } = {}) {
   const url = resolveUrl(baseUrl, endpoint, '/video/generations');
@@ -244,7 +246,10 @@ export async function callMedia({
         throw new Error(`媒体生成失败: ${pd?.message || pd?.error || status}`);
       }
     }
-    throw new Error('媒体生成轮询超时');
+    throw new Error(
+      `媒体生成轮询超时（已等待 ${timeoutMinutes(timeoutMs)} 分钟）。` +
+      '可在「设置 → 模型配置 → 高级 → 轮询超时(分钟)」调长。'
+    );
   }
   throw new Error('媒体模型未返回可识别的结果地址（请检查 endpoint / pollPath 配置）');
 }

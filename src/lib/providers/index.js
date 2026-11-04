@@ -11,6 +11,7 @@
 import { getModelConfig, isModalityConfigured, getResolvedConfig, writeAdapt, supportsThinkingToggle, reasoningThinkingOffBody } from './settings.js';
 import { callChat, callImage, callMedia, callTTS } from './openai.js';
 import { runWorkflow, materializeUrl } from './workflow.js';
+import { pollTimeoutMs } from './poll-timeout.js';
 
 export { getModelConfig, saveModelConfig, getAllModelConfig, saveAllModelConfig, isModalityConfigured, MODALITIES, PROVIDER_PRESETS, getResolvedConfig, detectProvider, isReasoningModel, reasoningThinkingOffBody, supportsThinkingToggle } from './settings.js';
 export { callChat, callImage, callMedia, callTTS, deepFindUrl } from './openai.js';
@@ -60,7 +61,7 @@ async function generateViaWorkflow(modality, c, std, { onProgress, signal, timeo
     extra: c.workflowExtra || {},
     onProgress,
     signal,
-    timeoutMs: timeoutMs || 600000,
+    timeoutMs: pollTimeoutMs(timeoutMs, c),
   });
   const url = c.persistMedia === false ? out.resultUrl : await materializeUrl(out.resultUrl);
   if (modality === 'image') return { resultUrl: url, allUrls: [url], raw: out.raw };
@@ -316,7 +317,7 @@ export async function generateVideo({ prompt, seconds, duration, aspect_ratio, r
     endpoint: c.endpoint,
     pollPath: c.pollPath,
     payload,
-    timeoutMs: timeoutMs || 600000,
+    timeoutMs: pollTimeoutMs(timeoutMs, c),
     onProgress,
     signal,
     authScheme: c.authScheme,
@@ -367,7 +368,7 @@ export async function generateMusic({ tags, lyrics, seconds, bpm, language, onPr
     endpoint: c.endpoint,
     pollPath: c.pollPath,
     payload,
-    timeoutMs: 600000,
+    timeoutMs: pollTimeoutMs(undefined, c),
     onProgress,
     signal,
     authScheme: c.authScheme,

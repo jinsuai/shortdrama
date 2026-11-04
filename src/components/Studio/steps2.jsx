@@ -196,7 +196,12 @@ export function StoryboardStep({ project, update, log }) {
             style={{ position: 'absolute', inset: 0 }}
             assets={canvasAssets}
             projectTitle={project?.title}
-            onSaveAsset={project ? (asset) => update?.({ ...project, assets: [asset, ...(project.assets || [])] }) : undefined}
+            shots={shots || []}
+            onSaveAsset={project ? (asset) => update?.((p) => ({ ...p, assets: [asset, ...(p.assets || [])] })) : undefined}
+            onUpdateShot={(i, patch) => update?.((p) => ({
+              ...p,
+              shots: (p.shots || []).map((s, idx) => (idx === i ? { ...s, ...patch } : s)),
+            }))}
           />
         </div>
       )}

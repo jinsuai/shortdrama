@@ -9,6 +9,7 @@ import {
   CharacterTemplateType,
   SceneTemplateType,
   SCENE_TEMPLATES,
+  CAMERA_DEFAULT_DURATION,
 } from './types';
 
 const genId = () => Math.random().toString(36).substring(2, 10);
@@ -24,6 +25,16 @@ interface DirectorStore {
   scene: SceneConfig;
   showGrid: boolean;
   showGizmos: boolean;
+
+  // 时间轴预演（镜头按 cameras 数组顺序依次切镜）
+  playing: boolean;
+  loop: boolean;
+  /** 秒；只给进度条用，由画布低频回写，避免每帧触发整块面板重渲染 */
+  playhead: number;
+  /** 预演当前切到的机位 id */
+  previewCameraId: string | null;
+  /** seek 时递增，通知画布把内部时钟同步到 playhead */
+  seekNonce: number;
 
   // 角色操作
   addCharacter: (name?: string, template?: CharacterTemplateType) => void;
@@ -44,6 +55,18 @@ interface DirectorStore {
   updateCamera: (id: string, updates: Partial<CameraShot>) => void;
   removeCamera: (id: string) => void;
   setActiveCamera: (id: string | null) => void;
+  moveCamera: (id: string, dir: -1 | 1) => void;
+
+  // 时间轴预演操作
+  play: () => void;
+  pause: () => void;
+  stop: () => void;
+  seek: (seconds: number) => void;
+  setLoop: (loop: boolean) => void;
+  /** 画布回写进度（低频） */
+  reportProgress: (seconds: number, cameraId: string | null) => void;
+  /** 一键按剧本/分镜生成机位（AI 布机位写回用）；元素为宽松的镜头草稿 */
+  replaceCameras: (shots: any[]) => void;
 
   // 场景操作
   updateScene: (updates: Partial<SceneConfig>) => void;
@@ -86,13 +109,37 @@ export const useDirectorStore = create<DirectorStore>((set, get) => ({
     },
   ],
   props: [],
-  cameras: [],
+  // 开箱即用的示例机位：进来就能直接播放时间轴预演 / 导出构图，
+  // 不用先手动布机位（用户点「新增机位」「AI 布机位」或导入存档时会整体替换）。
+  cameras: [
+    {
+      id: 'cam-1', name: '01 全景·双人建立',
+      position: { x: 7, y: 4.2, z: 9 }, target: { x: 1.5, y: 1.1, z: 0 },
+      fov: 45, aspect: '16:9', movement: 'push', movementSpeed: 0.6, duration: 5,
+    },
+    {
+      id: 'cam-2', name: '02 过肩·主角特写',
+      position: { x: 3.9, y: 1.9, z: 2.8 }, target: { x: 0, y: 1.4, z: 0 },
+      fov: 35, aspect: '16:9', movement: 'static', movementSpeed: 0.5, duration: 4,
+    },
+    {
+      id: 'cam-3', name: '03 环绕·宽银幕收尾',
+      position: { x: -4.5, y: 2.8, z: 6 }, target: { x: 1.5, y: 1.2, z: 0 },
+      fov: 50, aspect: '2.35:1', movement: 'orbit', movementSpeed: 0.8, duration: 6,
+    },
+  ],
   activeCameraId: null,
   selectedCharacterId: null,
   selectedPropId: null,
   scene: DEFAULT_SCENE,
   showGrid: true,
   showGizmos: true,
+
+  playing: false,
+  loop: true,
+  playhead: 0,
+  previewCameraId: null,
+  seekNonce: 0,
 
   addCharacter: (name, template = 'male_standard') => {
     const id = genId();
@@ -198,6 +245,7 @@ export const useDirectorStore = create<DirectorStore>((set, get) => ({
           aspect: '16:9',
           movement: 'static',
           movementSpeed: 1,
+          duration: CAMERA_DEFAULT_DURATION,
         },
       ],
       activeCameraId: id,
@@ -310,28 +358,107 @@ export const useDirectorStore = create<DirectorStore>((set, get) => ({
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
   toggleGizmos: () => set((s) => ({ showGizmos: !s.showGizmos })),
 
+  // ── 时间轴预演 ──────────────────────────────────────────────
+  moveCamera: (id, dir) =>
+    set((s) => {
+      const i = s.cameras.findIndex((c) => c.id === id);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= s.cameras.length) return s;
+      const next = [...s.cameras];
+      [next[i], next[j]] = [next[j], next[i]];
+      return { cameras: next };
+    }),
+
+  play: () =>
+    set((s) => ({
+      playing: s.cameras.length > 0,
+      playhead: 0,
+      previewCameraId: s.cameras[0]?.id ?? null,
+      seekNonce: s.seekNonce + 1,
+    })),
+  pause: () => set({ playing: false }),
+  stop: () =>
+    set((s) => ({
+      playing: false,
+      playhead: 0,
+      previewCameraId: null,
+      seekNonce: s.seekNonce + 1,
+    })),
+  seek: (seconds) =>
+    set((s) => ({ playhead: Math.max(0, seconds), seekNonce: s.seekNonce + 1 })),
+  setLoop: (loop) => set({ loop }),
+  reportProgress: (seconds, cameraId) =>
+    set({ playhead: seconds, previewCameraId: cameraId }),
+
+  /** AI 布机位写回：只接受认识的值，坏数据一律回退到安全默认，绝不让画布炸掉 */
+  replaceCameras: (shots) => {
+    const allowed = ['static', 'push', 'pull', 'pan', 'tilt', 'track', 'orbit'];
+    const num = (v: any, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+    const vec = (v: any, d: Vector3): Vector3 =>
+      v && typeof v === 'object' && ['x', 'y', 'z'].every((k) => typeof v[k] === 'number' && Number.isFinite(v[k]))
+        ? { x: v.x, y: v.y, z: v.z }
+        : d;
+    const list = (Array.isArray(shots) ? shots : []).slice(0, 24).map((raw: any, i: number) => ({
+      id: genId(),
+      name: String(raw?.name || `镜头${i + 1}`).slice(0, 40),
+      position: vec(raw?.position, { x: 0, y: 1.6, z: 5 }),
+      target: vec(raw?.target, { x: 0, y: 1, z: 0 }),
+      fov: Math.min(100, Math.max(20, num(raw?.fov, 50))),
+      aspect: typeof raw?.aspect === 'string' ? raw.aspect : '9:16',
+      movement: (allowed.includes(raw?.movement) ? raw.movement : 'static') as CameraShot['movement'],
+      movementSpeed: Math.min(4, Math.max(0.2, num(raw?.movementSpeed, 1))),
+      duration: Math.min(30, Math.max(0.5, num(raw?.duration, CAMERA_DEFAULT_DURATION))),
+    }));
+    set((s) => ({
+      cameras: list,
+      activeCameraId: null,
+      previewCameraId: null,
+      playing: false,
+      playhead: 0,
+      seekNonce: s.seekNonce + 1,
+    }));
+  },
+
   exportScene: () => {
-    const { characters, props, cameras, scene } = get();
+    const { characters, props, cameras, scene, loop, showGrid, showGizmos } = get();
     return {
-      version: '1.0',
+      version: '1.1',
       exportedAt: new Date().toISOString(),
       characters,
       props,
       cameras,
       scene,
+      loop,
+      showGrid,
+      showGizmos,
     };
   },
 
   /** 用项目里存过的布景回灌本地 store（只覆盖认识的字段，坏数据不炸画布） */
   loadScene: (data) => {
     if (!data || typeof data !== 'object') return;
+    // 旧存档（version 1.0）的机位没有 duration / movementSpeed，补默认值，
+    // 否则时间轴总时长会变 NaN，预演直接失效。
+    const cameras = Array.isArray(data.cameras)
+      ? data.cameras.map((c: any) => ({
+          ...c,
+          duration: typeof c?.duration === 'number' && Number.isFinite(c.duration) ? c.duration : CAMERA_DEFAULT_DURATION,
+          movementSpeed: typeof c?.movementSpeed === 'number' && Number.isFinite(c.movementSpeed) ? c.movementSpeed : 1,
+          movement: c?.movement || 'static',
+        }))
+      : get().cameras;
     set((s) => ({
       characters: Array.isArray(data.characters) ? data.characters : s.characters,
       props: Array.isArray(data.props) ? data.props : s.props,
-      cameras: Array.isArray(data.cameras) ? data.cameras : s.cameras,
+      cameras,
       scene: data.scene && typeof data.scene === 'object' ? { ...s.scene, ...data.scene } : s.scene,
       showGrid: typeof data.showGrid === 'boolean' ? data.showGrid : s.showGrid,
-      activeCameraId: data.cameras?.some?.((c: any) => c.id === data.activeCameraId)
+      showGizmos: typeof data.showGizmos === 'boolean' ? data.showGizmos : s.showGizmos,
+      loop: typeof data.loop === 'boolean' ? data.loop : s.loop,
+      playing: false,
+      playhead: 0,
+      previewCameraId: null,
+      activeCameraId: cameras.some?.((c: any) => c.id === data.activeCameraId)
         ? data.activeCameraId
         : null,
       selectedCharacterId: null,

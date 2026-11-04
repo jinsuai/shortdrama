@@ -15,7 +15,7 @@ import {
   ChevronRight,
 } from '../../lib/icons';
 import { useDirectorStore } from './store';
-import { ASPECT_RATIOS, CAMERA_MOVEMENTS, CHARACTER_TEMPLATES, SCENE_TEMPLATES } from './types';
+import { ASPECT_RATIOS, CAMERA_MOVEMENTS, CAMERA_MOVEMENT_HINTS, CAMERA_DEFAULT_DURATION, CHARACTER_TEMPLATES, SCENE_TEMPLATES } from './types';
 
 function PanelHeader({
   icon: Icon,
@@ -113,11 +113,109 @@ function Vector3Input({
 // 3D 重建任务（Tripo / H3 等）属云端付费服务，开源版未内置供应商，
 // 原后端轮询逻辑一并移除；如需接入，请在「设置 → 模型配置」扩展一个 3D 供应商后在此实现。
 
-export function DirectorPanel({ project, update, log }: { project?: any; update?: (key: string, value: any) => void; log?: (message: string) => void }) {
+/**
+ * 时间轴预演条。独立组件、独立订阅：进度每 0.12s 回写时只重渲染这一小块，
+ * 不会把整块 1000 行面板拖进每帧刷新。
+ */
+function TimelineBar() {
+  const cameras = useDirectorStore((s) => s.cameras);
+  const playing = useDirectorStore((s) => s.playing);
+  const loop = useDirectorStore((s) => s.loop);
+  const playhead = useDirectorStore((s) => s.playhead);
+  const previewCameraId = useDirectorStore((s) => s.previewCameraId);
+  const activeCameraId = useDirectorStore((s) => s.activeCameraId);
+  const play = useDirectorStore((s) => s.play);
+  const pause = useDirectorStore((s) => s.pause);
+  const stop = useDirectorStore((s) => s.stop);
+  const seek = useDirectorStore((s) => s.seek);
+  const setLoop = useDirectorStore((s) => s.setLoop);
+  const setActiveCamera = useDirectorStore((s) => s.setActiveCamera);
+
+  const dur = (c: any) => (Number.isFinite(c?.duration) && c.duration > 0 ? c.duration : CAMERA_DEFAULT_DURATION);
+  const total = cameras.reduce((a, c) => a + dur(c), 0);
+  const currentId = playing ? previewCameraId : activeCameraId;
+  const btn: React.CSSProperties = {
+    flex: 1, padding: '5px 4px', background: '#dbe3f2', border: 'none', borderRadius: 4,
+    color: '#1f2937', cursor: 'pointer', fontSize: 11,
+  };
+
+  let acc = 0;
+  return (
+    <div style={{ marginTop: 10, padding: 8, background: '#f5f7fb', borderRadius: 6, border: '1px solid #dde4f0' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#1f2937' }}>⏱ 时间轴预演</span>
+        <span style={{ fontSize: 10, color: '#7c8798' }}>
+          {playhead.toFixed(1)}s / {total.toFixed(1)}s
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+        <button style={{ ...btn, background: playing ? '#f59e0b' : '#4facfe', color: '#fff' }}
+          onClick={() => (playing ? pause() : play())} disabled={cameras.length === 0}>
+          {playing ? '⏸ 暂停' : '▶ 播放'}
+        </button>
+        <button style={btn} onClick={stop}>⏹ 停止</button>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: '#4b5563', cursor: 'pointer' }}>
+          <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} /> 循环
+        </label>
+      </div>
+      {/* 分段条：每段一个镜头，点击跳到该镜头起点 */}
+      <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', background: '#dbe3f2', marginBottom: 6 }}>
+        {cameras.map((c, i) => {
+          const start = acc;
+          acc += dur(c);
+          return (
+            <div
+              key={c.id}
+              title={`${c.name} · ${dur(c).toFixed(1)}s · ${CAMERA_MOVEMENTS.find((m) => m.value === c.movement)?.label || '固定'}`}
+              onClick={() => { stop(); setActiveCamera(c.id); seek(start); }}
+              style={{
+                flex: dur(c),
+                background: currentId === c.id ? '#f59e0b' : i % 2 ? '#93a7c4' : '#b7c6dc',
+                borderRight: '1px solid #fff',
+                cursor: 'pointer',
+              }}
+            />
+          );
+        })}
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={Math.max(total, 0.1)}
+        step={0.1}
+        value={Math.min(playhead, total || 0)}
+        onChange={(e) => seek(Number(e.target.value))}
+        style={{ width: '100%' }}
+      />
+      <div style={{ fontSize: 10, color: '#7c8798', marginTop: 4 }}>
+        {currentId
+          ? `当前镜头：${cameras.find((c) => c.id === currentId)?.name || '—'}`
+          : '点机位或播放，即可从该机位视角检查构图'}
+      </div>
+    </div>
+  );
+}
+
+export function DirectorPanel({
+  project,
+  update,
+  log,
+  onExportFrames,
+  onExportFrame,
+}: {
+  project?: any;
+  update?: (key: string, value: any) => void;
+  log?: (message: string) => void;
+  /** 按时间轴逐镜导出构图参考图（由 index.tsx 提供，需要画布） */
+  onExportFrames?: () => void;
+  /** 只导出当前选中机位的一张构图 */
+  onExportFrame?: (cameraId: string) => void;
+}) {
   const [sceneList, setSceneList] = useState<{name: string; description: string}[]>([]);
   const [extractingScenes, setExtractingScenes] = useState(false);
   const [generatingSceneImg, setGeneratingSceneImg] = useState(false);
   const [selectedSceneTemplate, setSelectedSceneTemplate] = useState<string>('empty');
+  const [aiPlacing, setAiPlacing] = useState(false);
   const [showImportCharModal, setShowImportCharModal] = useState(false);
   const {
     characters,
@@ -140,6 +238,8 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
     updateCamera,
     removeCamera,
     setActiveCamera,
+    moveCamera,
+    replaceCameras,
     updateScene,
     applySceneTemplate,
     toggleGrid,
@@ -151,12 +251,52 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
   const selectedPropItem = props.find((p) => p.id === selectedPropId);
   const activeCamera = cameras.find((c) => c.id === activeCameraId);
 
+  /** 新增机位：对着第一个角色自动取一个可看的构图位，而不是硬编码 [8,6,8] */
   const handleAddCameraFromView = () => {
-    // 从当前视角添加机位（简化版，用默认位置）
-    addCamera(
-      { x: 8, y: 6, z: 8 },
-      { x: 0, y: 1, z: 0 }
-    );
+    const c = characters[0];
+    const tx = c?.position?.x ?? 0;
+    const tz = c?.position?.z ?? 0;
+    const n = cameras.length;
+    addCamera({ x: tx + 2.6 + n * 0.5, y: 1.9, z: tz + 4.5 }, { x: tx, y: 1.25, z: tz });
+  };
+
+  /** AI 按剧本/分镜自动布机位：复用「设置 → 文本模型」，开源版无后端 */
+  const handleAiPlace = async () => {
+    setAiPlacing(true);
+    log?.('正在让 AI 按剧本布置机位…');
+    try {
+      const shots = Array.isArray(project?.shots) ? project.shots : [];
+      const script = String(project?.script || '').slice(0, 4000);
+      const shotText = shots.slice(0, 12).map((s: any, i: number) =>
+        `分镜${i + 1}：${s.title || ''} ${s.action || s.description || s.promptCn || s.firstFramePrompt || ''}`
+      ).join('\n');
+      const material = [script && `【剧本】\n${script}`, shotText && `【分镜】\n${shotText}`]
+        .filter(Boolean).join('\n\n') || '两人对话，情绪克制，室内。';
+      const content = await generateText(
+        [
+          {
+            role: 'system',
+            content: '你是影视分镜导演。只输出 JSON 数组，不要解释、不要 markdown 围栏。坐标单位米：人物站在原点附近、身高约 1.8 米，相机 y 在 1.2~3 之间，z 为离主体距离。',
+          },
+          {
+            role: 'user',
+            content: `为下面这场戏设计 3~6 个镜头，覆盖全景/中景/特写/正反打，并安排合理运镜。\n每个元素格式：\n{"name":"镜头名","position":{"x":0,"y":1.6,"z":5},"target":{"x":0,"y":1.2,"z":0},"fov":50,"aspect":"9:16","movement":"static|push|pull|pan|tilt|track|orbit","movementSpeed":1,"duration":4}\n\n${material}`,
+          },
+        ],
+        { maxTokens: 1800, temperature: 0.6 },
+      );
+      const raw = String(content || '[]')
+        .replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim();
+      const bracket = raw.match(/\[[\s\S]*\]/);
+      const arr = JSON.parse(bracket ? bracket[0] : raw || '[]');
+      if (!Array.isArray(arr) || arr.length === 0) throw new Error('模型未返回有效机位列表');
+      replaceCameras(arr);
+      log?.(`AI 已布置 ${arr.length} 个机位 · 点「▶ 播放」按时间轴预演，或导出构图参考图`);
+    } catch (e: any) {
+      log?.(`AI 布机位失败：${e?.message || e}（请先在「设置 → 模型配置」配置文本模型）`);
+    } finally {
+      setAiPlacing(false);
+    }
   };
 
   return (
@@ -593,27 +733,32 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
 
       {/* 机位管理 */}
       <PanelHeader icon={Camera} title="机位" count={cameras.length}>
+        <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+          <button
+            onClick={handleAddCameraFromView}
+            style={{ flex: 1, padding: '6px 4px', background: '#dbe3f2', border: 'none', borderRadius: 4, color: '#1f2937', cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+          >
+            <Camera size={12} /> 新增机位
+          </button>
+          <button
+            onClick={handleAiPlace}
+            disabled={aiPlacing}
+            style={{ flex: 1, padding: '6px 4px', background: aiPlacing ? '#94a3b8' : 'linear-gradient(135deg,#8b5cf6,#6d28d9)', border: 'none', borderRadius: 4, color: '#fff', cursor: 'pointer', fontSize: 11 }}
+          >
+            {aiPlacing ? '布置中…' : '🤖 AI 布机位'}
+          </button>
+        </div>
         <button
-          onClick={handleAddCameraFromView}
-          style={{
-            width: '100%',
-            padding: '6px',
-            background: '#dbe3f2',
-            border: 'none',
-            borderRadius: '4px',
-            color: '#1f2937',
-            cursor: 'pointer',
-            fontSize: '12px',
-            marginBottom: '8px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '4px',
-          }}
+          onClick={() => onExportFrames?.()}
+          disabled={cameras.length === 0}
+          style={{ width: '100%', padding: '6px', marginBottom: 8, background: 'linear-gradient(135deg,#f59e0b,#d97706)', border: 'none', borderRadius: 4, color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}
         >
-          <Camera size={12} /> 从当前视角新增机位
+          📸 导出全部构图参考图（按时间轴逐镜）
         </button>
-        {cameras.map((cam) => (
+        <div style={{ fontSize: 10, color: '#7c8798', marginBottom: 6, lineHeight: 1.5 }}>
+          镜头按列表顺序切镜 · 点机位即从该机位视角看构图
+        </div>
+        {cameras.map((cam, i) => (
           <div
             key={cam.id}
             onClick={() => setActiveCamera(cam.id)}
@@ -627,20 +772,29 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: 10, color: '#94a3b8', width: 14 }}>{i + 1}</span>
               <Camera size={12} color={activeCameraId === cam.id ? '#b45309' : '#888'} />
               <span style={{ fontSize: '12px', flex: 1 }}>{cam.name}</span>
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeCamera(cam.id);
-                }}
+                title="上移（提前切镜）"
+                onClick={(e) => { e.stopPropagation(); moveCamera(cam.id, -1); }}
+                style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: '0 2px', fontSize: 11 }}
+              >↑</button>
+              <button
+                title="下移（推后切镜）"
+                onClick={(e) => { e.stopPropagation(); moveCamera(cam.id, 1); }}
+                style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: '0 2px', fontSize: 11 }}
+              >↓</button>
+              <button
+                title="删除"
+                onClick={(e) => { e.stopPropagation(); removeCamera(cam.id); }}
                 style={{ background: 'none', border: 'none', color: '#f5576c', cursor: 'pointer', padding: 0 }}
               >
                 <Trash2 size={12} />
               </button>
             </div>
             <div style={{ fontSize: '10px', color: '#888', marginTop: '2px' }}>
-              {cam.aspect} · {CAMERA_MOVEMENTS.find((m) => m.value === cam.movement)?.label}
+              {cam.aspect} · {CAMERA_MOVEMENTS.find((m) => m.value === cam.movement)?.label} · {Number(cam.duration) || 4}s
             </div>
           </div>
         ))}
@@ -666,6 +820,18 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
               onChange={(v) => updateCamera(activeCamera.id, { target: v })}
             />
             <div style={{ marginBottom: '6px' }}>
+              <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>镜头时长（秒）</div>
+              <input
+                type="number"
+                min="0.5"
+                max="30"
+                step="0.5"
+                value={activeCamera.duration ?? 4}
+                onChange={(e) => updateCamera(activeCamera.id, { duration: Math.min(30, Math.max(0.5, Number(e.target.value) || 4)) })}
+                style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#1f2937', fontSize: '11px' }}
+              />
+            </div>
+            <div style={{ marginBottom: '6px' }}>
               <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>画幅</div>
               <select
                 value={activeCamera.aspect}
@@ -678,7 +844,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
               </select>
             </div>
             <div style={{ marginBottom: '6px' }}>
-              <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>运镜方式</div>
+              <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>运镜方式（播放时真实运动）</div>
               <select
                 value={activeCamera.movement}
                 onChange={(e) => updateCamera(activeCamera.id, { movement: e.target.value as any })}
@@ -688,6 +854,21 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
                   <option key={m.value} value={m.value}>{m.label}</option>
                 ))}
               </select>
+              <div style={{ fontSize: 10, color: '#7c8798', marginTop: 3 }}>
+                {CAMERA_MOVEMENT_HINTS[activeCamera.movement] || ''}
+              </div>
+            </div>
+            <div style={{ marginBottom: '6px' }}>
+              <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>运镜速度</div>
+              <input
+                type="range"
+                min="0.2"
+                max="3"
+                step="0.1"
+                value={activeCamera.movementSpeed ?? 1}
+                onChange={(e) => updateCamera(activeCamera.id, { movementSpeed: Number(e.target.value) })}
+                style={{ width: '100%' }}
+              />
             </div>
             <div style={{ marginBottom: '6px' }}>
               <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>
@@ -703,17 +884,14 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
               />
             </div>
             <button
-              onClick={() => {
-                const ref = exportCameraReference(activeCamera.id);
-                console.log('机位参考数据:', ref);
-                alert('机位参考数据已输出到控制台，可对接生图/生视频API');
-              }}
+              onClick={() => onExportFrame?.(activeCamera.id)}
               style={{ width: '100%', padding: '6px', background: 'linear-gradient(135deg, #4facfe, #00f2fe)', border: 'none', borderRadius: '4px', color: '#fff', cursor: 'pointer', fontSize: '11px', marginTop: '4px' }}
             >
-              📤 导出机位参考（对接生图）
+              📸 导出此机位构图参考图
             </button>
           </div>
         )}
+        <TimelineBar />
       </PanelHeader>
 
       {/* 场景设置 */}

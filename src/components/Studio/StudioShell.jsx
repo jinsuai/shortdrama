@@ -19,11 +19,11 @@ export function BrandMark({ size = 30 }) {
 }
 
 const MENU = [
-  { key: 'workspace', label: '工作区', icon: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' },
-  { key: 'library', label: '主体库', icon: 'M4 21V8l8-5 8 5v13M9 21v-6h6v6' },
-  { key: 'canvas', label: '无限画布', icon: 'M3 3h18v18H3zM9 3v18M15 3v18M3 9h18M3 15h18' },
-  { key: 'settings', label: '设置', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z' },
-  { key: 'restart', label: '重启服务', icon: 'M21 12a9 9 0 1 1-9-9M21 3v6h-6' },
+  { key: 'workspace', label: '工作区', group: '创作', icon: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' },
+  { key: 'library', label: '主体库', group: '创作', icon: 'M4 21V8l8-5 8 5v13M9 21v-6h6v6' },
+  { key: 'canvas', label: '无限画布', group: '创作', icon: 'M3 3h18v18H3zM9 3v18M15 3v18M3 9h18M3 15h18' },
+  { key: 'settings', label: '设置', group: '系统', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z' },
+  { key: 'restart', label: '重启服务', group: '系统', icon: 'M21 12a9 9 0 1 1-9-9M21 3v6h-6' },
 ];
 
 const Icon = ({ d, size = 16, color = 'currentColor' }) => (
@@ -148,33 +148,62 @@ export function StudioShell({ view, onViewChange, onRestart, children }) {
         </div>
 
         {/* 菜单 */}
-        <nav style={{ flex: 1, padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {MENU.map((m) => {
+        <nav style={{ flex: 1, padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 2, overflowY: 'auto' }}>
+          {MENU.map((m, i) => {
             const active = view === m.key;
             const isHover = hover === m.key;
+            const showGroup = i === 0 || MENU[i - 1].group !== m.group;
             return (
-              <button
-                key={m.key}
-                onMouseEnter={() => setHover(m.key)}
-                onMouseLeave={() => setHover(null)}
-                onClick={() => (m.key === 'restart' ? onRestart?.() : onViewChange(m.key))}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 9,
-                  padding: '9px 10px', border: 'none', borderRadius: 7,
-                  background: active ? 'rgba(109,40,217,0.14)' : isHover ? 'rgba(15,23,42,0.064)' : 'transparent',
-                  color: active ? '#6d28d9' : '#5b6678',
-                  cursor: 'pointer', fontSize: 13, textAlign: 'left',
-                  fontWeight: active ? 600 : 400, transition: 'all 0.15s',
-                }}
-              >
-                <Icon d={m.icon} size={15} />
-                {m.label}
-              </button>
+              <React.Fragment key={m.key}>
+                {showGroup && (
+                  <div style={{
+                    fontSize: 9.5, color: '#94a3b8', letterSpacing: '.1em', fontWeight: 700,
+                    padding: i === 0 ? '6px 10px 4px' : '14px 10px 4px',
+                  }}>{m.group}</div>
+                )}
+                <button
+                  onMouseEnter={() => setHover(m.key)}
+                  onMouseLeave={() => setHover(null)}
+                  onClick={() => (m.key === 'restart' ? onRestart?.() : onViewChange(m.key))}
+                  style={{
+                    position: 'relative', display: 'flex', alignItems: 'center', gap: 9,
+                    padding: '9px 10px', border: 'none', borderRadius: 7,
+                    background: active ? 'rgba(109,40,217,0.14)' : isHover ? 'rgba(15,23,42,0.064)' : 'transparent',
+                    color: active ? '#6d28d9' : '#5b6678',
+                    cursor: 'pointer', fontSize: 13, textAlign: 'left',
+                    fontWeight: active ? 600 : 400, transition: 'all 0.15s',
+                  }}
+                >
+                  {active && (
+                    <span style={{
+                      position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)',
+                      width: 3, height: 16, background: '#6d28d9', borderRadius: 2,
+                    }} />
+                  )}
+                  <Icon d={m.icon} size={15} />
+                  {m.label}
+                </button>
+              </React.Fragment>
             );
           })}
         </nav>
 
-        <div style={{ padding: '0 16px 8px', fontSize: 10, color: '#33363d' }}>v0.1.0</div>
+        {/* 底部状态卡：明确「数据在本机 + 模型走设置」，比孤零零一行版本号有用 */}
+        <div style={{ padding: '8px 12px 12px' }}>
+          <div style={{
+            borderRadius: 9, padding: '9px 10px',
+            background: 'rgba(109,40,217,.07)', border: '1px solid rgba(109,40,217,.16)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, color: '#6d28d9', fontWeight: 700 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+              本地创作模式
+            </div>
+            <div style={{ fontSize: 9.5, color: '#6b7280', marginTop: 5, lineHeight: 1.6 }}>
+              项目数据保存在本机<br />模型走「设置 → 模型配置」
+            </div>
+          </div>
+          <div style={{ padding: '8px 4px 0', fontSize: 10, color: '#94a3b8' }}>v0.1.0</div>
+        </div>
       </aside>
 
       {/* ── 主内容区 ── */}

@@ -48,6 +48,7 @@ const FIELD_HELP = {
   endpoint: '接口路径，可填相对路径（拼到 Base URL 后）或完整 URL。留空时按模态自动取标准路径（图片 /images/generations、视频 /video/generations…），并按已识别的厂商自动调整。只有特殊服务才需要改。',
   size: '视频分辨率，厂商特定。部分服务强制特定值（如 720P 必填）；其他按文档填，或留空用服务默认。',
   pollPath: '任务型 API 专用：先返回任务 id、再轮询拿结果（Kling / Runway / Sora 等）。填 /tasks/{id} 或完整轮询 URL；{id} 会自动替换成任务 id。直出型服务（返回即结果 URL）留空即可。',
+  pollTimeoutMinutes: '提交后最多等多久（分钟）。默认 30 分钟；长视频、上游排队久或跑 ComfyUI 工作流时可调到 60~120。超时只是本地停止等待，不会取消上游任务。旧版固定 10 分钟，常把还在排队的任务误判成失败。',
   videoMode: '生成模式（请求里 mode 字段的取值），决定使用哪类素材：纯文字(text) / 首尾帧(keyframe) / 参考图·音频(reference)。留空则根据本次提交自动推断——有首/尾帧→keyframe，有参考图/音频→reference，都没有→text。换模型只改这里，代码无需动。',
   engine: '厂商自定义的引擎标识字段。默认不发送；只有你的服务商明确要求时才填。',
   sendNegative: '图片请求是否带上 negative_prompt（负向词）。默认勾选，使用内置通用负向词（糊、畸形、水印等）。若你的服务对未知字段做严格校验、带负向词就报错，取消勾选即可，请求体里将不再出现该字段。',
@@ -235,6 +236,8 @@ export function ApiSettings() {
         // 思考模式开关：默认开启（使用模型原生思考能力）；可关闭以提速 / 省 token。
         // 仅对「可自由开关思考」的模型有意义，UI 会在高级里按需显示。
         useThinking: all[m]?.useThinking !== false,
+        // 轮询超时（分钟）：留空用全局默认 30，长视频/工作流可自行调长。
+        pollTimeoutMinutes: all[m]?.pollTimeoutMinutes ?? 30,
       };
     });
     return init;
@@ -425,6 +428,20 @@ export function ApiSettings() {
                   marginTop: 10, padding: 12, borderRadius: 8,
                   background: 'rgba(15,23,42,0.028)', border: '1px dashed rgba(15,23,42,0.16)',
                 }}>
+                  {/* 轮询超时：长视频 / 工作流排队久时调长，避免被误判为失败 */}
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={labelStyle}>轮询超时（分钟）</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={240}
+                      step={1}
+                      value={c.pollTimeoutMinutes ?? 30}
+                      onChange={(e) => setField(m, 'pollTimeoutMinutes', Math.min(240, Math.max(1, Number(e.target.value) || 30)))}
+                      style={inputStyle}
+                    />
+                    <HelpHint>{FIELD_HELP.pollTimeoutMinutes}</HelpHint>
+                  </div>
                   {/* 思考模式开关：仅对可自由开关思考的模型显示（如 GLM-Z / Qwen-QwQ）。
                       非思考模型、或思考强制关不掉的（DeepSeek-R1 / o1/o3/o4）不显示。 */}
                   {supportsThinkingToggle(c.model) && (

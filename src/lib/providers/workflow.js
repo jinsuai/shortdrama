@@ -10,6 +10,7 @@
 // 换平台、换工作流都不需要改代码；字段名一个都不写死。
 
 import { authHeaders, resolveUrl, deepFindUrl } from './openai.js';
+import { pollTimeoutMs, timeoutMinutes } from './poll-timeout.js';
 
 /**
  * 工作流平台的标准路径模板。{id} = 工作流 id，{task} = 任务 id。
@@ -449,10 +450,12 @@ export async function submitWorkflow(cfg, id, payload, { signal } = {}) {
   return { task, raw: data, status: d?.status || '' };
 }
 
-export async function pollWorkflow(cfg, task, { timeoutMs = 600000, onProgress, signal, intervalMs = 4000 } = {}) {
+export async function pollWorkflow(cfg, task, { timeoutMs, onProgress, signal, intervalMs = 4000 } = {}) {
   const paths = cfg?.workflowPaths || DEFAULT_WORKFLOW_PATHS;
   const url = wfUrl(cfg, paths.result, { task });
-  const deadline = Date.now() + timeoutMs;
+  // 超时时长统一由 poll-timeout.js 决定：显式值 > 设置里的分钟数 > 全局默认(30min)。
+  const ms = pollTimeoutMs(timeoutMs, cfg);
+  const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, intervalMs));
     if (signal?.aborted) throw new Error('已取消');
@@ -469,15 +472,19 @@ export async function pollWorkflow(cfg, task, { timeoutMs = 600000, onProgress, 
       throw new Error(`工作流执行失败：${d?.message || d?.error || d?.msg || status}`);
     }
   }
-  throw new Error('工作流轮询超时，任务未在预期时间内完成');
+  throw new Error(
+    `工作流轮询超时（已等待 ${timeoutMinutes(ms)} 分钟），任务未在预期时间内完成。` +
+    '可在「设置 → 模型配置 → 高级 → 轮询超时(分钟)」调长，或确认任务是否仍在上游排队。'
+  );
 }
 
 /**
  * 一键跑完：读规则 → 映射素材 → 提交 → 轮询 → 拿结果地址。
  * modality 用于挑选正确的产物（视频/音频/图片）。
+ * timeoutMs 不写死默认值，交给 pollTimeoutMs 按「显式 > 设置 > 全局默认」解析。
  */
 export async function runWorkflow({
-  cfg, modality = 'video', std = {}, extra = {}, onProgress, signal, timeoutMs = 600000,
+  cfg, modality = 'video', std = {}, extra = {}, onProgress, signal, timeoutMs,
 } = {}) {
   const id = String(cfg?.workflowId || '').trim();
   if (!id) {

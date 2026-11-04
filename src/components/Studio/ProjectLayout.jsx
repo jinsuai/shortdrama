@@ -17,6 +17,7 @@ const NARROW = [
 
 export function ProjectLayout({
   projectTitle,
+  project,        // 用于计算九步完成态与整体制作进度
   currentStep,
   onStepChange,
   onBack,
@@ -25,6 +26,31 @@ export function ProjectLayout({
   actions,        // 面包屑右侧的操作按钮（如「一键全自动」）
   children,       // 主工作区内容
 }) {
+  // 每步完成态只读 project 里已存在的字段，缺失一律按「未完成」，不会误报。
+  // 字段名与 steps1/2/3、MultiTrackEditor、Director3D 实际读写保持一致。
+  const scriptText = typeof project?.script === 'string'
+    ? project.script
+    : (project?.script?.text || '');
+  const mats = project?.materials || {};
+  const shots = project?.shots || [];
+  const hasAny = (arr) => Array.isArray(arr) && arr.length > 0;
+  const stepDone = {
+    script: scriptText.trim().length > 0,
+    art: !!(project?.artDirection?.preset || project?.artDirection?.name || project?.artDirection?.positive),
+    assets: hasAny(mats.characters) || hasAny(mats.scenes) || hasAny(mats.props),
+    storyboard: shots.length > 0,
+    motion: shots.some((s) => s?.videoUrl),
+    assembly: !!project?.assembledVideo || (shots.length > 0 && shots.every((s) => s?.videoUrl)),
+    editor: !!project?.assembledVideo,
+    director: !!project?.director3d?.firstFrame || hasAny(project?.director3d?.frames),
+    voice: shots.some((s) => s?.audioUrl) || (mats.characters || []).some((c) => c?.voiceAudio),
+    mix: !!project?.bgmUrl,
+    export: !!project?.upscaled,
+  };
+  const doneCount = T.steps.filter((s) => stepDone[s.id]).length;
+  const totalSteps = T.steps.length;
+  const pct = Math.round((doneCount / totalSteps) * 100);
+
   return (
     <div style={{
       display: 'flex', height: '100vh', overflow: 'hidden',
@@ -83,13 +109,35 @@ export function ProjectLayout({
           {actions && <div style={{ display: 'flex', alignItems: 'center' }}>{actions}</div>}
         </div>
 
-        {/* 步骤列表 */}
+        {/* 制作进度：完成数 / 总步数 + 进度条（对标 Reveric 工作台的进度可视化） */}
+        <div style={{ padding: '9px 10px', borderBottom: '1px solid rgba(15,23,42,0.096)' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            fontSize: 10.5, color: '#6b7280', marginBottom: 6,
+          }}>
+            <span>制作进度</span>
+            <b style={{ color: '#6d28d9', fontSize: 11 }}>{doneCount} / {totalSteps} 步</b>
+          </div>
+          <div style={{ height: 5, borderRadius: 3, background: 'rgba(15,23,42,.08)', overflow: 'hidden' }}>
+            <div style={{
+              width: `${pct}%`, height: '100%', borderRadius: 3,
+              background: 'linear-gradient(90deg,#8b5cf6,#0891b2)', transition: 'width .3s',
+            }} />
+          </div>
+        </div>
+
+        {/* 步骤列表：✓ 已完成 · ● 当前 · ○ 未开始 */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 6px' }}>
+          <div style={{
+            fontSize: 9.5, color: '#94a3b8', letterSpacing: '.08em', fontWeight: 700,
+            padding: '4px 8px 6px',
+          }}>流水线</div>
           {T.steps.map((s) => {
             const active = s.id === currentStep;
+            const done = !!stepDone[s.id];
             return (
               <button key={s.id} onClick={() => onStepChange?.(s.id)}
-                title={`${s.n} ${s.label}`}
+                title={`${s.n} ${s.label}${done ? '（已完成）' : ''}`}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: 6,
                   padding: '7px 8px', border: 'none', borderRadius: 7, textAlign: 'left',
@@ -121,6 +169,18 @@ export function ProjectLayout({
                     background: 'rgba(245,158,11,.16)', color: '#b45309',
                   }}>Beta</span>
                 )}
+                {/* 状态标记宽度固定，避免挤压标题省略号 */}
+                <span style={{
+                  width: 12, flexShrink: 0, display: 'inline-flex',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {done
+                    ? <Icon name="check" size={12} color={active ? '#6d28d9' : '#16a34a'} />
+                    : <span style={{
+                        width: 6, height: 6, borderRadius: '50%',
+                        background: active ? '#8b5cf6' : 'rgba(15,23,42,.18)',
+                      }} />}
+                </span>
               </button>
             );
           })}

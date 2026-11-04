@@ -15,8 +15,10 @@ export interface Character {
   color: string;
   lookAtTarget?: string; // 注视目标角色ID
   template?: CharacterTemplateType; // 人物模板
-  outfit?: string; // 服装颜色
+  outfit?: string; // 上衣/服装颜色
   hairColor?: string; // 发色
+  skinColor?: string; // 肤色（可选，默认暖肤色）
+  pantsColor?: string; // 下装颜色（可选，默认由服装色派生）
   gender?: 'male' | 'female'; // 性别
   modelUrl?: string; // 自定义3D模型（GLB/GLTF）
   modelType?: 'procedural' | 'custom' | 'ai-generated'; // 模型类型
@@ -53,8 +55,24 @@ export interface CameraShot {
   aspect: string; // 画幅 16:9 / 9:16 / 1:1 / 2.35:1
   movement: 'static' | 'push' | 'pull' | 'pan' | 'tilt' | 'track' | 'orbit';
   movementSpeed: number;
+  /** 时间轴上该镜头的时长（秒）。镜头按 cameras 数组顺序依次切镜。 */
+  duration: number;
   thumbnail?: string;
 }
+
+/** 新建机位的默认时长（秒） */
+export const CAMERA_DEFAULT_DURATION = 4;
+
+/** 运镜轨迹的中文说明，面板里直接展示，避免用户以为下拉框只是摆设 */
+export const CAMERA_MOVEMENT_HINTS: Record<CameraShot['movement'], string> = {
+  static: '固定机位，不做运动',
+  push: '沿视线缓缓推近主体',
+  pull: '沿视线缓缓拉远',
+  pan: '水平横移（摇镜）',
+  tilt: '垂直升降（俯仰）',
+  track: '与主体同向平移跟拍',
+  orbit: '环绕主体旋转',
+};
 
 export interface SceneConfig {
   background: string;

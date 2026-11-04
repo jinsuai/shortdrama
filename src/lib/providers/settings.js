@@ -5,6 +5,8 @@
 // 一套配置即可对接 OpenAI / DeepSeek / 通义千问 / 智谱 / Moonshot / vLLM / Ollama /
 // 本地 ComfyUI-OpenAI 节点 等绝大多数服务。视频 / 音乐等非标准模态允许额外 endpoint / pollPath。
 
+import { DEFAULT_POLL_TIMEOUT_MINUTES } from './poll-timeout.js';
+
 const KEY = 'MODEL_SETTINGS';
 
 // 各模态的默认配置与展示元数据。baseUrl 留空表示「使用标准 OpenAI 地址」。
@@ -247,6 +249,9 @@ export function getResolvedConfig(modality) {
     },
     // 工作流型结果 URL 有效期很短，默认转存本机
     persistMedia: saved.persistMedia ?? true,
+    // 提交后轮询的超时（分钟）。长视频 / 上游排队久的任务可在「高级」里调长，
+    // 所有生成链路统一由 poll-timeout.js 读取这个值。
+    pollTimeoutMinutes: saved.pollTimeoutMinutes ?? DEFAULT_POLL_TIMEOUT_MINUTES,
     // 供 UI 显示「自动推断结果」
     autoEndpoint: !raw.endpoint ? autoEndpoint(modality, raw, prov) : '',
     meta,
