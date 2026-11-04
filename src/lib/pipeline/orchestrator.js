@@ -186,8 +186,12 @@ async function runMotion(project, { onProgress, signal, agent, defaults } = {}) 
   const shots = project?.shots || [];
   if (!shots.length) throw new Error('还没有分镜，无法生成动态');
   const chars = project?.materials?.characters || [];
-  const ratio = defaults?.ratio || '9:16';
-  const seconds = String(defaults?.durationSec || 5);
+  const ratio = defaults?.ratio || project?.motion?.ratio || '9:16';
+  const seconds = String(defaults?.durationSec || project?.motion?.duration || 5);
+  // 🔴 画质档位也要下发：Agent 建议值 → 用户在「画质规格」里选的 → 兜底 720p。
+  //    以前这里只传 aspect_ratio，视频模型/工作流一律退回自身默认（多为 768P），
+  //    一键全自动流程就成了「界面选 1080P、实际出 768P」。
+  const quality = defaults?.resolution || project?.motion?.quality || '720p';
 
   const next = [...shots];
   for (let i = 0; i < next.length; i += 1) {
@@ -203,10 +207,12 @@ async function runMotion(project, { onProgress, signal, agent, defaults } = {}) 
     const mode = refs.length ? 'reference' : 'text';
     try {
       onProgress?.('motion', 'log', { message: `生成视频 ${i + 1}/${next.length}：${(prompt || '').slice(0, 20)}…` });
-      const { resultUrl } = await generateVideo({
-        prompt, seconds, aspect_ratio: ratio, mode,
+      const { resultUrl, warnings } = await generateVideo({
+        prompt, seconds, aspect_ratio: ratio, quality, mode,
         images: refs, signal,
       });
+      // 平台枚举里没这一档画质时会静默降档，把实际用了哪档写进日志说清楚。
+      (warnings || []).forEach((w) => onProgress?.('motion', 'log', { message: w }));
       next[i] = { ...s, videoUrl: resultUrl };
     } catch (e) {
       onProgress?.('motion', 'log', { message: `第 ${i + 1} 镜视频失败：${e?.message || e}` });
