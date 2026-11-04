@@ -1,5 +1,5 @@
 ﻿import { useState } from 'react';
-import { generateImage, generateText } from '../../lib/providers/index.js';
+import { generateText } from '../../lib/providers/index.js';
 import { saveBlob } from '../../utils.js';
 import {
   User,
@@ -15,7 +15,7 @@ import {
   ChevronRight,
 } from '../../lib/icons';
 import { useDirectorStore } from './store';
-import { ASPECT_RATIOS, CAMERA_MOVEMENTS, CAMERA_MOVEMENT_HINTS, CAMERA_DEFAULT_DURATION, CHARACTER_TEMPLATES, SCENE_TEMPLATES } from './types';
+import { ASPECT_RATIOS, CAMERA_MOVEMENTS, CAMERA_MOVEMENT_HINTS, CAMERA_DEFAULT_DURATION, CHARACTER_TEMPLATES, CHARACTER_POSES, SCENE_TEMPLATES, type CharacterPose } from './types';
 
 function PanelHeader({
   icon: Icon,
@@ -110,8 +110,8 @@ function Vector3Input({
 }
 
 
-// 3D 重建任务（Tripo / H3 等）属云端付费服务，开源版未内置供应商，
-// 原后端轮询逻辑一并移除；如需接入，请在「设置 → 模型配置」扩展一个 3D 供应商后在此实现。
+// 导演台只做「白模空间预演」：人物与道具都是程序化素模，不加载任何外部 3D 模型，
+// 也不需要 3D 重建服务。预演看的是构图、遮挡、视线与机位关系。
 
 /**
  * 时间轴预演条。独立组件、独立订阅：进度每 0.12s 回写时只重渲染这一小块，
@@ -211,9 +211,6 @@ export function DirectorPanel({
   /** 只导出当前选中机位的一张构图 */
   onExportFrame?: (cameraId: string) => void;
 }) {
-  const [sceneList, setSceneList] = useState<{name: string; description: string}[]>([]);
-  const [extractingScenes, setExtractingScenes] = useState(false);
-  const [generatingSceneImg, setGeneratingSceneImg] = useState(false);
   const [selectedSceneTemplate, setSelectedSceneTemplate] = useState<string>('empty');
   const [aiPlacing, setAiPlacing] = useState(false);
   const [showImportCharModal, setShowImportCharModal] = useState(false);
@@ -240,6 +237,7 @@ export function DirectorPanel({
     setActiveCamera,
     moveCamera,
     replaceCameras,
+    applyStoryboardLayout,
     updateScene,
     applySceneTemplate,
     toggleGrid,
@@ -299,6 +297,129 @@ export function DirectorPanel({
     }
   };
 
+  /**
+   * 从项目分镜一键生成白模预演：确定性推导，不依赖模型 API。
+   * 白模场景只有一套站位、时间轴按机位顺序切镜，因此这里把「所有出场人物」摆成一个
+   * 基础站位（双人面对面 / 多人半圆弧 / 单人原点），再给每个分镜生成一个机位。
+   * 导入后用户拖动人物/机位即可微调，姿态用选中角色的下拉框随时改。
+   */
+  const handleImportStoryboard = () => {
+    const shots = (Array.isArray(project?.shots) ? project.shots : []).filter(Boolean).slice(0, 24);
+    if (shots.length === 0) {
+      log?.('项目里还没有分镜，请先在「03 分镜」拆分剧本');
+      alert('项目里还没有分镜，请先在「03 分镜」拆分剧本，再回来一键摆位。');
+      return;
+    }
+
+    // 出场人物名：兼容 ["角色名"] / [{name:"角色名"}] 两种写法，保持首次出现顺序
+    const namesOf = (sh: any): string[] =>
+      (Array.isArray(sh?.characters) ? sh.characters : [])
+        .map((n: any) => String(typeof n === 'string' ? n : n?.name || n?.character || '').trim())
+        .filter(Boolean);
+    const cast: string[] = [];
+    for (const sh of shots) {
+      for (const n of namesOf(sh)) if (!cast.includes(n)) cast.push(n);
+    }
+    if (cast.length === 0) cast.push('主角');
+
+    // 项目人物库：只用来取性别/体型，取不到就走标准男性
+    const lib: any[] = project?.materials?.characters || project?.characters || project?.outline?.characters || [];
+
+    // 姿态：按该角色第一次出场的画面描述/台词里的动作词推断
+    const poseOf = (name: string): CharacterPose => {
+      const sh = shots.find((s: any) => namesOf(s).includes(name));
+      const text = [sh?.title, sh?.sceneDesc, sh?.description, sh?.action, sh?.dialogue, sh?.promptCn]
+        .filter(Boolean).join(' ');
+      if (/坐|落座|椅|沙发|餐桌|床沿|端坐/.test(text)) return 'sit';
+      if (/蹲|跪|俯身|弯腰|捡拾|伏低/.test(text)) return 'squat';
+      if (/走|跑|奔|冲|迈步|入场|离开|追|赶/.test(text)) return 'walk';
+      return 'stand';
+    };
+
+    // 站位：双人面对面对话 / 多人半圆弧 / 单人原点
+    const layoutChars = cast.map((name, i) => {
+      const info = lib.find((c: any) => c?.name === name) || {};
+      const female = info.gender === '女' || info.gender === 'female' || /女/.test(String(info.role || ''));
+      let position = { x: 0, y: 0, z: 0 };
+      let rotation = { x: 0, y: 0, z: 0 };
+      if (cast.length === 2) {
+        position = i === 0 ? { x: -1.1, y: 0, z: 0 } : { x: 1.1, y: 0, z: 0 };
+        rotation = { x: 0, y: i === 0 ? Math.PI / 2 : -Math.PI / 2, z: 0 };
+      } else if (cast.length > 2) {
+        const a = (i / (cast.length - 1) - 0.5) * Math.PI * 0.9;
+        const r = 2.2;
+        position = { x: Math.sin(a) * r, y: 0, z: -Math.cos(a) * r + 0.6 };
+        rotation = { x: 0, y: -a, z: 0 };
+      }
+      return {
+        name,
+        position,
+        rotation,
+        scale: 1,
+        color: female ? '#e8a0bf' : '#4a90d9',
+        template: female ? 'female_standard' : 'male_standard',
+        gender: female ? 'female' : 'male',
+        outfit: female ? '#c0392b' : '#cbd5e4',
+        hairColor: '#2d1810',
+        pose: poseOf(name),
+      };
+    });
+
+    // 场景模板的道具都堆在原点附近，人物整体前移到布景前方，避免被沙发/茶几挡住
+    layoutChars.forEach((c) => { c.position.z += 2.4; });
+
+    // 景别 → 机位距离/焦距/高度；运镜中文 → 画布支持的运镜枚举
+    const sizeOf = (t: string) =>
+      /远景/.test(t) ? { dist: 9, fov: 55, y: 2.4 }
+        : /全景/.test(t) ? { dist: 6.5, fov: 50, y: 2.0 }
+        : /近景/.test(t) ? { dist: 2.4, fov: 40, y: 1.6 }
+        : /特写/.test(t) ? { dist: 1.6, fov: 35, y: 1.5 }
+        : { dist: 4, fov: 45, y: 1.7 };
+    const moveOf = (t: string) =>
+      /推/.test(t) ? 'push' : /拉/.test(t) ? 'pull' : /摇/.test(t) ? 'pan'
+        : /升降|俯仰/.test(t) ? 'tilt' : /移|跟/.test(t) ? 'track'
+        : /环绕|旋转/.test(t) ? 'orbit' : 'static';
+
+    const cameraDrafts = shots.map((sh: any, i: number) => {
+      const size = sizeOf(String(sh?.sceneType || ''));
+      const inShot = namesOf(sh).map((n) => layoutChars.find((c) => c.name === n)).filter(Boolean) as any[];
+      const pts = inShot.length ? inShot : [layoutChars[0]];
+      const tx = pts.reduce((a, c) => a + c.position.x, 0) / pts.length;
+      const tz = pts.reduce((a, c) => a + c.position.z, 0) / pts.length;
+      // 机位角度逐镜交错，避免所有机位叠在同一个位置
+      const ang = (i % 2 === 0 ? 0.28 : -0.36) + (i % 3) * 0.09;
+      return {
+        name: `${String(i + 1).padStart(2, '0')} ${String(sh?.title || sh?.sceneType || '分镜').slice(0, 18)}`,
+        position: { x: tx + Math.sin(ang) * size.dist, y: size.y, z: tz + Math.cos(ang) * size.dist },
+        target: { x: tx, y: 1.2, z: tz },
+        fov: size.fov,
+        aspect: '9:16',
+        movement: moveOf(String(sh?.cameraMove || '')),
+        movementSpeed: 1,
+        duration: Math.min(10, Math.max(2, Number(sh?.duration) || 4)),
+      };
+    });
+
+    applyStoryboardLayout({ characters: layoutChars, cameras: cameraDrafts });
+
+    // 场景氛围：从分镜文本里找地点关键词，命中就套用对应的素模场景模板
+    const allText = shots.map((s: any) => [s?.title, s?.sceneDesc, s?.promptCn, s?.sceneType].filter(Boolean).join(' ')).join(' ');
+    const tpl = /医院|病房|病床|输液/.test(allText) ? 'hospital'
+      : /酒吧|夜店|吧台/.test(allText) ? 'bar'
+      : /森林|树林|树丛|野外/.test(allText) ? 'forest'
+      : /宫殿|朝堂|龙椅|皇宫/.test(allText) ? 'palace'
+      : /办公室|办公桌|工位/.test(allText) ? 'office'
+      : /卧室|床上|床头/.test(allText) ? 'bedroom'
+      : /客厅|沙发|茶几/.test(allText) ? 'livingroom'
+      : /街道|马路|街边|巷/.test(allText) ? 'street'
+      : null;
+    if (tpl) {
+      setSelectedSceneTemplate(tpl);
+      applySceneTemplate(tpl as any);
+    }
+    log?.(`已导入 ${shots.length} 个分镜：摆好 ${layoutChars.length} 个白模人物（含姿态），生成 ${cameraDrafts.length} 个机位${tpl ? '，并套用「' + SCENE_TEMPLATES.find((t) => t.value === tpl)?.label + '」场景' : ''}。接下来直接拖动人物/机位微调即可`);
+  };
+
   return (
     <div
       style={{
@@ -320,7 +441,23 @@ export function DirectorPanel({
           color: '#fff',
         }}
       >
-        🎬 3D 导演台
+        🎬 白模导演台 · 分镜预演
+      </div>
+
+      {/* 一键从分镜生成白模站位 */}
+      <div style={{ padding: '10px 12px', background: '#f5f7fb', borderBottom: '1px solid #dde4f0' }}>
+        <div style={{ fontSize: '12px', fontWeight: 600, color: '#1f2937', marginBottom: '6px' }}>
+          📥 从分镜一键生成预演
+        </div>
+        <button
+          onClick={handleImportStoryboard}
+          style={{ width: '100%', padding: '8px', background: 'linear-gradient(135deg, #0ea5e9, #6D28D9)', border: 'none', borderRadius: '5px', color: '#fff', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+        >
+          导入分镜 · 自动摆位 + 机位
+        </button>
+        <div style={{ fontSize: '10px', color: '#7c8798', marginTop: '6px', lineHeight: 1.5 }}>
+          读取分镜的出场人物 / 景别 / 运镜，自动摆好白模站位与姿态、逐镜生成机位，并按场景关键词切换氛围。导入后拖动人物、机位或改姿态即可微调。
+        </div>
       </div>
 
       {/* 角色管理 */}
@@ -506,6 +643,21 @@ export function DirectorPanel({
               </select>
             </div>
             <div style={{ marginBottom: '6px' }}>
+              <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>姿态</div>
+              <select
+                value={selectedChar.pose || 'stand'}
+                onChange={(e) => updateCharacter(selectedChar.id, { pose: e.target.value as CharacterPose })}
+                style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#1f2937', fontSize: '11px' }}
+              >
+                {CHARACTER_POSES.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+              <div style={{ fontSize: 10, color: '#7c8798', marginTop: 3 }}>
+                {CHARACTER_POSES.find((p) => p.value === (selectedChar.pose || 'stand'))?.hint}
+              </div>
+            </div>
+            <div style={{ marginBottom: '6px' }}>
               <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>
                 服装颜色
               </div>
@@ -537,130 +689,6 @@ export function DirectorPanel({
                 onChange={(e) => updateCharacter(selectedChar.id, { color: e.target.value })}
                 style={{ width: '100%', height: '24px', border: 'none', borderRadius: '4px' }}
               />
-            </div>
-            {/* 3D模型上传 */}
-            <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #dde4f0' }}>
-              <div style={{ fontSize: '11px', color: '#4facfe', marginBottom: '6px', fontWeight: 600 }}>
-                🎲 3D人物模型
-              </div>
-              <div style={{ fontSize: '10px', color: '#666', marginBottom: '6px' }}>
-                当前：{selectedChar.modelType === 'custom' ? '自定义模型' : '程序化模型'}
-              </div>
-              <input
-                type="file"
-                accept=".glb,.gltf,.obj"
-                style={{ display: 'none' }}
-                id={`char-model-${selectedChar.id}`}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    const url = URL.createObjectURL(file);
-                    updateCharacter(selectedChar.id, { modelUrl: url, modelType: 'custom' });
-                  }
-                }}
-              />
-              <div style={{ display: 'flex', gap: '4px' }}>
-                <button
-                  onClick={() => document.getElementById(`char-model-${selectedChar.id}`)?.click()}
-                  style={{ flex: 1, padding: '5px', background: '#2a4a6a', border: 'none', borderRadius: '4px', color: '#fff', cursor: 'pointer', fontSize: '11px' }}
-                >
-                  📁 上传模型
-                </button>
-                {selectedChar.modelType === 'custom' && (
-                  <button
-                    onClick={() => updateCharacter(selectedChar.id, { modelUrl: undefined, modelType: 'procedural' })}
-                    style={{ padding: '5px 8px', background: '#4a2a2a', border: 'none', borderRadius: '4px', color: '#f5576c', cursor: 'pointer', fontSize: '11px' }}
-                  >
-                    清除
-                  </button>
-                )}
-              </div>
-              <div style={{ fontSize: '9px', color: '#555', marginTop: '4px' }}>
-                支持 GLB / GLTF / OBJ 格式
-              </div>
-            </div>
-
-            {/* 人物四视图生成 + 3D模型生成 */}
-            <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #dde4f0' }}>
-              <div style={{ fontSize: '11px', color: '#4facfe', marginBottom: '6px', fontWeight: 600 }}>
-                🎨 AI生成四视图 + 3D模型
-              </div>
-
-              {/* 四视图显示 */}
-              {selectedChar.fourViews && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', marginBottom: '8px' }}>
-                  {['front', 'left', 'back', 'right'].map((view) => (
-                    <div key={view} style={{ position: 'relative', aspectRatio: '1', background: '#f5f7fb', borderRadius: '4px', overflow: 'hidden', border: '1px solid #dde4f0' }}>
-                      {selectedChar.fourViews?.[view] ? (
-                        <img src={selectedChar.fourViews[view]} alt={view} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      ) : (
-                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: '#555' }}>
-                          {view === 'front' ? '正面' : view === 'left' ? '左面' : view === 'back' ? '后面' : '右面'}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* 角色参考图显示 */}
-              {selectedChar.imageUrl && (
-                <div style={{ marginBottom: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '10px', color: '#888', marginBottom: '4px' }}>角色参考图（从人物管理导入）</div>
-                  <img src={selectedChar.imageUrl} alt="角色参考图" style={{ width: '80px', height: '80px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #dde4f0' }} />
-                </div>
-              )}
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <button
-                  onClick={async () => {
-                    if (!selectedChar) return;
-                    try {
-                      const hasRefImage = !!selectedChar.imageUrl;
-                      const charDesc = `动漫风格角色，角色「${selectedChar.name}」，${selectedChar.outfit || "日常服装"}，${selectedChar.hairColor ? `发色${selectedChar.hairColor}` : "黑色头发"}`;
-                      log?.(`正在为「${selectedChar.name}」生成四视图${hasRefImage ? '（参考角色图）' : ''}...`);
-                      const views = [
-                        { key: "front", label: "正面全身照，正视角，纯色背景" },
-                        { key: "left", label: "左侧全身照，左90度视角，纯色背景" },
-                        { key: "back", label: "背面全身照，背视角，纯色背景" },
-                        { key: "right", label: "右侧全身照，右90度视角，纯色背景" },
-                      ];
-                      const fourViews: any = {};
-                      for (const v of views) {
-                        // 走「设置 → 图片模型」里用户自备的 API（开源版无后端、无计费）
-                        const imgRes = await generateImage(`${charDesc}，${v.label}`, {
-                          size: "1024x1024",
-                          n: 1,
-                          ...(hasRefImage ? { referenceImage: selectedChar.imageUrl } : {}),
-                        });
-                        if (!imgRes?.resultUrl) throw new Error("四视图图片生成失败");
-                        fourViews[v.key] = imgRes.resultUrl;
-                      }
-                      updateCharacter(selectedChar.id, { fourViews });
-                      log?.(`「${selectedChar.name}」四视图生成完成${hasRefImage ? '（参考角色图）' : ''}`);
-                    } catch (e: any) {
-                      log?.(`四视图生成失败: ${e.message}`);
-                    }
-                  }}
-                  style={{ width: '100%', padding: '6px', background: selectedChar.imageUrl ? 'linear-gradient(135deg, #10b981, #059669)' : 'linear-gradient(135deg, #6D28D9, #0891B2)', border: 'none', borderRadius: '4px', color: '#fff', cursor: 'pointer', fontSize: '11px' }}
-                >
-                  {selectedChar.imageUrl ? '🎨 参考图生成四视图' : '🎨 生成角色四视图'}
-                </button>
-
-                <button
-                  onClick={() => {
-                    // 3D 重建（Tripo / H3 等）是云端付费模型，开源版未内置供应商；
-                    // 不假装能生成，直接说明可行替代方案，避免点了没反应。
-                    alert('开源版未内置 3D 重建模型（Tripo / H3.1 属云端服务）。\n可先用上方「📁 上传模型」导入本地 GLB / GLTF / OBJ 进场景。');
-                  }}
-                  style={{ width: '100%', padding: '6px', background: '#dbe3f2', border: '1px solid #c7d3e6', borderRadius: '4px', color: '#1f2937', cursor: 'pointer', fontSize: '11px' }}
-                >
-                  🎲 生成3D模型（需自备 3D 重建服务）
-                </button>
-              </div>
-              <div style={{ fontSize: '9px', color: '#555', marginTop: '4px' }}>
-                四视图走「设置 → 图片模型」；3D 模型可上传本地 GLB/GLTF
-              </div>
             </div>
           </div>
         )}
@@ -946,155 +974,6 @@ export function DirectorPanel({
           />
           场景雾效
         </label>
-        {/* AI场景生成 - 完整流程 */}
-        <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #dde4f0' }}>
-          <div style={{ fontSize: '11px', color: '#4facfe', marginBottom: '8px', fontWeight: 600 }}>
-            🏞️ AI场景生成（完整流程）
-          </div>
-
-          {/* 步骤1：选择当前集 */}
-          <div style={{ marginBottom: '8px' }}>
-            <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>① 选择当前集</div>
-            <select
-              value={scene.selectedEpisodeId || ''}
-              onChange={(e) => { updateScene({ selectedEpisodeId: e.target.value }); setSceneList([]); }}
-              style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#1f2937', fontSize: '11px' }}
-            >
-              <option value="">请选择集数</option>
-              {(project?.episodes || []).map((ep: any, i: number) => (
-                <option key={ep.id} value={ep.id}>{ep.title || `第${i + 1}集`}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* 步骤2：AI提取场景列表 */}
-          <div style={{ marginBottom: '8px' }}>
-            <button
-              disabled={!scene.selectedEpisodeId || extractingScenes}
-              onClick={async () => {
-                if (!scene.selectedEpisodeId) return;
-                setExtractingScenes(true);
-                try {
-                  log?.('正在AI从剧本提取场景列表...');
-                  const episode = (project?.episodes || []).find((ep: any) => ep.id === scene.selectedEpisodeId);
-                  const episodeContent = episode?.content || episode?.script || '';
-                  const prompt = `从以下剧本内容中提取所有故事发生的**空场景**（环境/地点），不要提取包含人物的场景。每个场景只描述环境本身，不描述人物动作或对话。
-
-要求：
-1. 只提取场景环境（地点、建筑、空间），不要提取人物场景
-2. 场景描述要详细，包含：建筑结构、室内/室外、道具陈设、氛围、光线、时间（白天/夜晚）、天气等
-3. 不要描述人物、人物动作、人物对话
-4. 返回JSON格式：[{"name":"场景名称","description":"详细的空场景环境描述，包含建筑、道具、氛围、光影、时间、天气等，不包含人物"}]
-
-剧本内容：
-${episodeContent.substring(0, 3000)}`;
-                  // 走「设置 → 文本模型」里用户自备的 LLM（开源版无后端、无计费）
-                  const content = await generateText(
-                    [{ role: "user", content: prompt }],
-                    { maxTokens: 4096, temperature: 0.3 },
-                  );
-                  // 模型常把 JSON 包在 ```json 围栏里，先剥掉围栏再解析
-                  const jsonText = String(content || "[]")
-                    .replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim();
-                  const parsed = JSON.parse(jsonText || "[]");
-                  const scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || parsed.list || []);
-                  setSceneList(scenes);
-                  log?.(`提取到 ${scenes.length} 个场景`);
-                } catch (e: any) {
-                  log?.(`场景提取失败: ${e.message}`);
-                } finally {
-                  setExtractingScenes(false);
-                }
-              }}
-              style={{ width: '100%', padding: '6px', background: scene.selectedEpisodeId && !extractingScenes ? 'linear-gradient(135deg, #10b981, #059669)' : '#333', border: 'none', borderRadius: '4px', color: '#fff', cursor: scene.selectedEpisodeId && !extractingScenes ? 'pointer' : 'not-allowed', fontSize: '11px' }}
-            >
-              {extractingScenes ? '提取中...' : '🤖 ② AI提取场景列表'}
-            </button>
-          </div>
-
-          {/* 步骤3：选择场景 */}
-          {sceneList.length > 0 && (
-            <div style={{ marginBottom: '8px' }}>
-              <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>③ 选择场景</div>
-              <select
-                value={scene.selectedSceneName || ''}
-                onChange={(e) => {
-                  const sceneItem = sceneList.find(s => s.name === e.target.value);
-                  updateScene({ selectedSceneName: e.target.value, scenePrompt: sceneItem?.description || '' });
-                }}
-                style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#1f2937', fontSize: '11px' }}
-              >
-                <option value="">请选择场景</option>
-                {sceneList.map((s, i) => (
-                  <option key={i} value={s.name}>{s.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* 步骤4：场景提示词（可编辑） */}
-          <div style={{ marginBottom: '8px' }}>
-            <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>④ 场景提示词（可编辑）</div>
-            <textarea
-              value={scene.scenePrompt || ''}
-              onChange={(e) => updateScene({ scenePrompt: e.target.value })}
-              placeholder="场景描述，用于生成场景概念图"
-              style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#1f2937', fontSize: '11px', minHeight: '50px', resize: 'vertical' }}
-            />
-          </div>
-
-          {/* 步骤5：生成场景概念图 */}
-          <div style={{ marginBottom: '6px' }}>
-            <button
-              disabled={!scene.scenePrompt || generatingSceneImg}
-              onClick={async () => {
-                if (!scene.scenePrompt) return;
-                setGeneratingSceneImg(true);
-                try {
-                  log?.('正在生成场景概念图...');
-                  // 走「设置 → 图片模型」里用户自备的 API（开源版无后端、无计费）
-                  const imgRes = await generateImage(scene.scenePrompt, { size: "1536x864", n: 1 });
-                  if (!imgRes?.resultUrl) throw new Error("未返回图片URL");
-                  updateScene({ sceneImageUrl: imgRes.resultUrl });
-                  log?.('场景概念图生成完成');
-                } catch (e: any) {
-                  log?.(`场景图生成失败: ${e.message}`);
-                } finally {
-                  setGeneratingSceneImg(false);
-                }
-              }}
-              style={{ width: '100%', padding: '6px', background: scene.scenePrompt && !generatingSceneImg ? 'linear-gradient(135deg, #6D28D9, #0891B2)' : '#333', border: 'none', borderRadius: '4px', color: '#fff', cursor: scene.scenePrompt && !generatingSceneImg ? 'pointer' : 'not-allowed', fontSize: '11px' }}
-            >
-              {generatingSceneImg ? '生成中...' : '🎨 ⑤ 生成场景概念图'}
-            </button>
-          </div>
-
-          {/* 步骤6：生成3D场景 */}
-          <div style={{ marginBottom: '8px' }}>
-            <button
-              onClick={() => {
-                alert('开源版未内置图生 3D 场景（Tripo / H3.1 属云端服务）。\n已生成的场景概念图可在「资产 → 场景」里继续用，或用场景模板快速搭基础环境。');
-              }}
-              style={{ width: '100%', padding: '6px', background: '#dbe3f2', border: '1px solid #c7d3e6', borderRadius: '4px', color: '#1f2937', cursor: 'pointer', fontSize: '11px' }}
-            >
-              🎲 ⑥ 生成3D场景（需自备 3D 重建服务）
-            </button>
-          </div>
-
-          {/* 场景图显示 */}
-          {scene.sceneImageUrl && (
-            <div style={{ marginBottom: '8px' }}>
-              <img src={scene.sceneImageUrl} alt="场景概念图" style={{ width: '100%', borderRadius: '4px', border: '1px solid #dde4f0' }} />
-            </div>
-          )}
-
-          {scene.sceneModelUrl && (
-            <div style={{ fontSize: '10px', color: '#10b981', marginBottom: '4px' }}>
-              ✓ 3D场景模型已生成：{scene.selectedSceneName || '未命名场景'}
-            </div>
-          )}
-        </div>
-
         <button
           onClick={() => {
             const data = exportScene();
@@ -1137,16 +1016,6 @@ ${episodeContent.substring(0, 3000)}`;
                     }
                     const template = pc.gender === '女' ? 'female_standard' : 'male_standard';
                     addCharacter(pc.name, template as any);
-                    // 延迟更新额外属性
-                    setTimeout(() => {
-                      const char = useDirectorStore.getState().characters.find((c: any) => c.name === pc.name);
-                      if (char) {
-                        updateCharacter(char.id, {
-                          description: pc.description || pc.desc || pc.appearance || '',
-                          imageUrl: pc.imageUrl || pc.avatar || pc.image || null,
-                        });
-                      }
-                    }, 100);
                     log?.(`导入角色：${pc.name}`);
                     alert(`成功导入角色：${pc.name}`);
                   }}

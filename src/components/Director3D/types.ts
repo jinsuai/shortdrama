@@ -1,10 +1,21 @@
-// 3D导演台类型定义
+// 白模预演导演台类型定义
+// 约定：不加载任何外部 3D 模型（GLB/GLTF/OBJ），人物与道具统一程序化素模。
 
 export interface Vector3 {
   x: number;
   y: number;
   z: number;
 }
+
+/** 白模支持的姿态（靠素模几何表达，不依赖外部模型文件） */
+export type CharacterPose = 'stand' | 'sit' | 'squat' | 'walk';
+
+export const CHARACTER_POSES: { value: CharacterPose; label: string; hint: string }[] = [
+  { value: 'stand', label: '站立', hint: '默认站姿，适合对话、全景' },
+  { value: 'sit', label: '坐姿', hint: '坐于素模座椅，适合室内谈话、餐桌戏' },
+  { value: 'squat', label: '蹲姿', hint: '俯身下蹲，适合低机位、捡拾动作' },
+  { value: 'walk', label: '行走', hint: '迈步造型，适合跟拍、入场镜头' },
+];
 
 export interface Character {
   id: string;
@@ -20,9 +31,8 @@ export interface Character {
   skinColor?: string; // 肤色（可选，默认暖肤色）
   pantsColor?: string; // 下装颜色（可选，默认由服装色派生）
   gender?: 'male' | 'female'; // 性别
-  modelUrl?: string; // 自定义3D模型（GLB/GLTF）
-  modelType?: 'procedural' | 'custom' | 'ai-generated'; // 模型类型
-  fourViews?: { front?: string; left?: string; back?: string; right?: string }; // 四视图
+  /** 姿态：站立 / 坐姿 / 蹲姿 / 行走 */
+  pose?: CharacterPose;
 }
 
 export type CharacterTemplateType = 'male_standard' | 'female_standard' | 'male_athletic' | 'female_elegant' | 'child';
@@ -38,12 +48,11 @@ export const CHARACTER_TEMPLATES: { value: CharacterTemplateType; label: string;
 export interface Prop {
   id: string;
   name: string;
-  type: 'box' | 'sphere' | 'cylinder' | 'plane' | 'model';
+  type: 'box' | 'sphere' | 'cylinder' | 'plane';
   position: Vector3;
   rotation: Vector3;
   scale: Vector3;
   color: string;
-  modelUrl?: string; // 自定义3D模型
 }
 
 export interface CameraShot {
@@ -83,12 +92,6 @@ export interface SceneConfig {
   ambientLightIntensity: number;
   directionalLightIntensity: number;
   directionalLightPosition: Vector3;
-  environmentModelUrl?: string; // 自定义场景3D模型
-  showEnvironmentModel?: boolean; // 是否显示场景模型
-  selectedEpisodeId?: string; // 当前选中的集ID
-  scenePrompt?: string; // 场景提示词
-  sceneImageUrl?: string; // 场景概念图URL
-  sceneModelUrl?: string; // 3D场景模型URL
 }
 
 export interface Director3DState {

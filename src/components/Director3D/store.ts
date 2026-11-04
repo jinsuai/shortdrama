@@ -14,6 +14,47 @@ import {
 
 const genId = () => Math.random().toString(36).substring(2, 10);
 
+const numOf = (v: any, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+const vecOf = (v: any, d: Vector3): Vector3 =>
+  v && typeof v === 'object' && ['x', 'y', 'z'].every((k) => typeof v[k] === 'number' && Number.isFinite(v[k]))
+    ? { x: v.x, y: v.y, z: v.z }
+    : d;
+
+/** 机位草稿清洗：只接受认识的值，坏数据一律回退到安全默认，绝不让画布炸掉 */
+function normalizeCameraShots(shots: any[]): CameraShot[] {
+  const allowed = ['static', 'push', 'pull', 'pan', 'tilt', 'track', 'orbit'];
+  return (Array.isArray(shots) ? shots : []).slice(0, 24).map((raw: any, i: number) => ({
+    id: genId(),
+    name: String(raw?.name || `镜头${i + 1}`).slice(0, 40),
+    position: vecOf(raw?.position, { x: 0, y: 1.6, z: 5 }),
+    target: vecOf(raw?.target, { x: 0, y: 1, z: 0 }),
+    fov: Math.min(100, Math.max(20, numOf(raw?.fov, 50))),
+    aspect: typeof raw?.aspect === 'string' ? raw.aspect : '9:16',
+    movement: (allowed.includes(raw?.movement) ? raw.movement : 'static') as CameraShot['movement'],
+    movementSpeed: Math.min(4, Math.max(0.2, numOf(raw?.movementSpeed, 1))),
+    duration: Math.min(30, Math.max(0.5, numOf(raw?.duration, CAMERA_DEFAULT_DURATION))),
+  }));
+}
+
+/** 人物站位草稿清洗：白模只认这些字段，外部模型/参考图等一律丢弃 */
+function normalizeCharacterDrafts(chars: any[]): Character[] {
+  const poses = ['stand', 'sit', 'squat', 'walk'];
+  const templates = ['male_standard', 'female_standard', 'male_athletic', 'female_elegant', 'child'];
+  return (Array.isArray(chars) ? chars : []).slice(0, 24).map((raw: any, i: number) => ({
+    id: genId(),
+    name: String(raw?.name || `角色${i + 1}`).slice(0, 40),
+    position: vecOf(raw?.position, { x: 0, y: 0, z: 0 }),
+    rotation: vecOf(raw?.rotation, { x: 0, y: 0, z: 0 }),
+    scale: Math.min(2, Math.max(0.5, numOf(raw?.scale, 1))),
+    color: typeof raw?.color === 'string' ? raw.color : '#4facfe',
+    template: (templates.includes(raw?.template) ? raw.template : 'male_standard') as CharacterTemplateType,
+    gender: raw?.gender === 'female' ? 'female' : 'male',
+    outfit: typeof raw?.outfit === 'string' ? raw.outfit : undefined,
+    hairColor: typeof raw?.hairColor === 'string' ? raw.hairColor : undefined,
+    pose: (poses.includes(raw?.pose) ? raw.pose : 'stand') as Character['pose'],
+  }));
+}
+
 interface DirectorStore {
   // 状态
   characters: Character[];
@@ -67,6 +108,8 @@ interface DirectorStore {
   reportProgress: (seconds: number, cameraId: string | null) => void;
   /** 一键按剧本/分镜生成机位（AI 布机位写回用）；元素为宽松的镜头草稿 */
   replaceCameras: (shots: any[]) => void;
+  /** 从分镜一键导入：整体替换人物站位（含姿态）与机位，坏数据不炸画布 */
+  applyStoryboardLayout: (layout: { characters: any[]; cameras: any[] }) => void;
 
   // 场景操作
   updateScene: (updates: Partial<SceneConfig>) => void;
@@ -392,25 +435,26 @@ export const useDirectorStore = create<DirectorStore>((set, get) => ({
 
   /** AI 布机位写回：只接受认识的值，坏数据一律回退到安全默认，绝不让画布炸掉 */
   replaceCameras: (shots) => {
-    const allowed = ['static', 'push', 'pull', 'pan', 'tilt', 'track', 'orbit'];
-    const num = (v: any, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
-    const vec = (v: any, d: Vector3): Vector3 =>
-      v && typeof v === 'object' && ['x', 'y', 'z'].every((k) => typeof v[k] === 'number' && Number.isFinite(v[k]))
-        ? { x: v.x, y: v.y, z: v.z }
-        : d;
-    const list = (Array.isArray(shots) ? shots : []).slice(0, 24).map((raw: any, i: number) => ({
-      id: genId(),
-      name: String(raw?.name || `镜头${i + 1}`).slice(0, 40),
-      position: vec(raw?.position, { x: 0, y: 1.6, z: 5 }),
-      target: vec(raw?.target, { x: 0, y: 1, z: 0 }),
-      fov: Math.min(100, Math.max(20, num(raw?.fov, 50))),
-      aspect: typeof raw?.aspect === 'string' ? raw.aspect : '9:16',
-      movement: (allowed.includes(raw?.movement) ? raw.movement : 'static') as CameraShot['movement'],
-      movementSpeed: Math.min(4, Math.max(0.2, num(raw?.movementSpeed, 1))),
-      duration: Math.min(30, Math.max(0.5, num(raw?.duration, CAMERA_DEFAULT_DURATION))),
-    }));
+    const list = normalizeCameraShots(shots);
     set((s) => ({
       cameras: list,
+      activeCameraId: null,
+      previewCameraId: null,
+      playing: false,
+      playhead: 0,
+      seekNonce: s.seekNonce + 1,
+    }));
+  },
+
+  /** 导入分镜：一次写入人物站位（含姿态）+ 机位，用户随后手动微调 */
+  applyStoryboardLayout: (layout) => {
+    const characters = normalizeCharacterDrafts(layout?.characters);
+    const cameras = normalizeCameraShots(layout?.cameras);
+    set((s) => ({
+      characters,
+      cameras,
+      selectedCharacterId: null,
+      selectedPropId: null,
       activeCameraId: null,
       previewCameraId: null,
       playing: false,

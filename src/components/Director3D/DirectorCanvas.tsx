@@ -170,6 +170,27 @@ function GradientSky({ base }: { base: string }) {
 // 方便判断「正反打」里人物的视线关系。
 // ─────────────────────────────────────────────────────────────
 
+/** 头/颈/鼻梁：四种姿态复用，鼻梁标记面朝方向（+z） */
+function ClayHead({ y, z = 0, r }: { y: number; z?: number; r: number }) {
+  return (
+    <>
+      <mesh position={[0, y - 0.145, z]} castShadow>
+        <cylinderGeometry args={[0.048, 0.055, 0.12, 12]} />
+        {Mat(CLAY_DARK)}
+      </mesh>
+      <mesh position={[0, y, z]} scale={[1, 1.14, 0.94]} castShadow>
+        <sphereGeometry args={[r, 24, 20]} />
+        {Mat()}
+      </mesh>
+      <mesh position={[0, y - 0.02, z + r * 0.93]} rotation={[Math.PI / 2, 0, 0]}>
+        <coneGeometry args={[0.022, 0.06, 8]} />
+        {Mat(CLAY_DARK)}
+      </mesh>
+    </>
+  );
+}
+
+// 姿态 stand / sit / squat / walk 全部靠素模几何表达，不加载任何外部模型文件。
 function HumanoidBody({ character }: { character: Character }) {
   const tpl = character.template || 'male_standard';
   const isFemale = character.gender === 'female' || tpl.includes('female');
@@ -180,8 +201,196 @@ function HumanoidBody({ character }: { character: Character }) {
   const shoulder = athletic ? 0.46 : elegant ? 0.31 : child ? 0.27 : 0.38;
   const hip = isFemale ? 0.3 : 0.27;
   const headR = child ? 0.15 : 0.125;
-  const headY = 1.7;
+  const pose = character.pose || 'stand';
 
+  // ── 坐姿：坐于素模座椅，大腿水平前伸、小腿垂直落地，重心降到 0.55 米 ──
+  if (pose === 'sit') {
+    return (
+      <group>
+        {/* 素模座椅：座面 + 靠背 + 四腿 */}
+        <mesh position={[0, 0.46, -0.04]} castShadow receiveShadow>
+          <boxGeometry args={[0.52, 0.06, 0.46]} />
+          {Mat(CLAY_DARK)}
+        </mesh>
+        <mesh position={[0, 0.75, -0.26]} castShadow>
+          <boxGeometry args={[0.52, 0.52, 0.06]} />
+          {Mat(CLAY_DARK)}
+        </mesh>
+        {[-1, 1].flatMap((sx) => [-1, 1].map((sz) => (
+          <mesh key={`chairleg-${sx}-${sz}`} position={[sx * 0.21, 0.22, -0.04 + sz * 0.17]} castShadow>
+            <cylinderGeometry args={[0.028, 0.028, 0.44, 8]} />
+            {Mat(CLAY_DARK)}
+          </mesh>
+        )))}
+        {/* 骨盆 */}
+        <mesh position={[0, 0.55, -0.02]} scale={[hip * 1.12, 0.18, 0.17]} castShadow>
+          <sphereGeometry args={[1, 16, 12]} />
+          {Mat()}
+        </mesh>
+        {[-1, 1].map((s) => (
+          <group key={`sit-leg-${s}`}>
+            {/* 大腿：capsule 默认沿 y，转 90° 后水平朝 +z */}
+            <mesh position={[s * 0.11, 0.53, 0.16]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+              <capsuleGeometry args={[0.095, 0.34, 6, 12]} />
+              {Mat()}
+            </mesh>
+            <mesh position={[s * 0.11, 0.3, 0.38]} castShadow>
+              <capsuleGeometry args={[0.075, 0.32, 6, 12]} />
+              {Mat()}
+            </mesh>
+            <mesh position={[s * 0.11, 0.055, 0.44]} castShadow>
+              <boxGeometry args={[0.14, 0.11, 0.27]} />
+              {Mat(CLAY_DARK)}
+            </mesh>
+          </group>
+        ))}
+        <mesh position={[0, 0.9, -0.02]} castShadow>
+          <cylinderGeometry args={[shoulder * 0.78, hip * 0.88, 0.52, 18]} />
+          {Mat()}
+        </mesh>
+        <mesh position={[0, 1.12, -0.02]} scale={[shoulder, 0.11, 0.17]} castShadow>
+          <sphereGeometry args={[1, 16, 12]} />
+          {Mat()}
+        </mesh>
+        {/* 手臂自然垂放到大腿上 */}
+        {[-1, 1].map((s) => (
+          <group key={`sit-arm-${s}`}>
+            <mesh position={[s * (shoulder + 0.055), 0.92, 0.02]} rotation={[0.35, 0, s * 0.12]} castShadow>
+              <capsuleGeometry args={[0.055, 0.28, 6, 12]} />
+              {Mat()}
+            </mesh>
+            <mesh position={[s * (shoulder + 0.085), 0.7, 0.16]} rotation={[0.9, 0, s * 0.08]} castShadow>
+              <capsuleGeometry args={[0.048, 0.24, 6, 12]} />
+              {Mat(CLAY_DARK)}
+            </mesh>
+            <mesh position={[s * (shoulder + 0.095), 0.57, 0.29]} castShadow>
+              <sphereGeometry args={[0.052, 12, 10]} />
+              {Mat()}
+            </mesh>
+          </group>
+        ))}
+        <ClayHead y={1.34} z={-0.02} r={headR} />
+      </group>
+    );
+  }
+
+  // ── 蹲姿：屈膝、躯干前倾、双臂撑膝，头顶降到约 1.3 米 ──
+  if (pose === 'squat') {
+    return (
+      <group>
+        <mesh position={[0, 0.56, -0.06]} scale={[hip * 1.12, 0.18, 0.17]} castShadow>
+          <sphereGeometry args={[1, 16, 12]} />
+          {Mat()}
+        </mesh>
+        {[-1, 1].map((s) => (
+          <group key={`squat-leg-${s}`}>
+            {/* 大腿斜向前上，膝盖顶到 z≈0.36 */}
+            <mesh position={[s * 0.14, 0.62, 0.13]} rotation={[1.15, 0, 0]} castShadow>
+              <capsuleGeometry args={[0.095, 0.34, 6, 12]} />
+              {Mat()}
+            </mesh>
+            <mesh position={[s * 0.14, 0.34, 0.36]} rotation={[-0.22, 0, 0]} castShadow>
+              <capsuleGeometry args={[0.075, 0.32, 6, 12]} />
+              {Mat()}
+            </mesh>
+            <mesh position={[s * 0.14, 0.055, 0.42]} castShadow>
+              <boxGeometry args={[0.14, 0.11, 0.27]} />
+              {Mat(CLAY_DARK)}
+            </mesh>
+          </group>
+        ))}
+        {/* 躯干前倾 */}
+        <mesh position={[0, 0.86, 0.02]} rotation={[0.28, 0, 0]} castShadow>
+          <cylinderGeometry args={[shoulder * 0.78, hip * 0.88, 0.52, 18]} />
+          {Mat()}
+        </mesh>
+        <mesh position={[0, 1.1, 0.1]} scale={[shoulder, 0.11, 0.17]} castShadow>
+          <sphereGeometry args={[1, 16, 12]} />
+          {Mat()}
+        </mesh>
+        {/* 手臂前伸撑膝 */}
+        {[-1, 1].map((s) => (
+          <group key={`squat-arm-${s}`}>
+            <mesh position={[s * (shoulder + 0.055), 0.94, 0.12]} rotation={[0.7, 0, s * 0.12]} castShadow>
+              <capsuleGeometry args={[0.055, 0.28, 6, 12]} />
+              {Mat()}
+            </mesh>
+            <mesh position={[s * (shoulder + 0.085), 0.74, 0.3]} rotation={[1.1, 0, s * 0.08]} castShadow>
+              <capsuleGeometry args={[0.048, 0.24, 6, 12]} />
+              {Mat(CLAY_DARK)}
+            </mesh>
+            <mesh position={[s * (shoulder + 0.095), 0.63, 0.42]} castShadow>
+              <sphereGeometry args={[0.052, 12, 10]} />
+              {Mat()}
+            </mesh>
+          </group>
+        ))}
+        <ClayHead y={1.32} z={0.13} r={headR} />
+      </group>
+    );
+  }
+
+  // ── 行走：双腿绕髋前后摆、双臂反向摆，上半身与站姿一致 ──
+  if (pose === 'walk') {
+    return (
+      <group>
+        {[-1, 1].map((s) => {
+          const swing = s < 0 ? 0.42 : -0.38;
+          return (
+            <group key={`walk-leg-${s}`} position={[s * 0.11, 0.95, 0]} rotation={[swing, 0, 0]}>
+              <mesh position={[0, -0.64, 0]} castShadow>
+                <capsuleGeometry args={[0.075, 0.32, 6, 12]} />
+                {Mat()}
+              </mesh>
+              <mesh position={[0, -0.25, 0]} castShadow>
+                <capsuleGeometry args={[0.095, 0.32, 6, 12]} />
+                {Mat()}
+              </mesh>
+              <mesh position={[0, -0.895, 0.055]} castShadow>
+                <boxGeometry args={[0.14, 0.11, 0.27]} />
+                {Mat(CLAY_DARK)}
+              </mesh>
+            </group>
+          );
+        })}
+        <mesh position={[0, 0.95, 0]} scale={[hip * 1.12, 0.18, 0.17]} castShadow>
+          <sphereGeometry args={[1, 16, 12]} />
+          {Mat()}
+        </mesh>
+        <mesh position={[0, 1.26, 0]} castShadow>
+          <cylinderGeometry args={[shoulder * 0.78, hip * 0.88, 0.52, 18]} />
+          {Mat()}
+        </mesh>
+        <mesh position={[0, 1.48, 0]} scale={[shoulder, 0.11, 0.17]} castShadow>
+          <sphereGeometry args={[1, 16, 12]} />
+          {Mat()}
+        </mesh>
+        {/* 手臂与腿反向前后摆 */}
+        {[-1, 1].map((s) => {
+          const fwd = s < 0 ? -1 : 1;
+          return (
+            <group key={`walk-arm-${s}`}>
+              <mesh position={[s * (shoulder + 0.055), 1.28, fwd * 0.1]} rotation={[fwd * 0.3, 0, s * 0.12]} castShadow>
+                <capsuleGeometry args={[0.055, 0.28, 6, 12]} />
+                {Mat()}
+              </mesh>
+              <mesh position={[s * (shoulder + 0.085), 1.02, fwd * 0.16]} rotation={[fwd * 0.3, 0, s * 0.08]} castShadow>
+                <capsuleGeometry args={[0.048, 0.24, 6, 12]} />
+                {Mat(CLAY_DARK)}
+              </mesh>
+              <mesh position={[s * (shoulder + 0.095), 0.86, fwd * 0.2]} castShadow>
+                <sphereGeometry args={[0.052, 12, 10]} />
+                {Mat()}
+              </mesh>
+            </group>
+          );
+        })}
+        <ClayHead y={1.7} r={headR} />
+      </group>
+    );
+  }
+
+  // ── 站立（默认） ──
   return (
     <group>
       {/* 鞋 */}
@@ -204,9 +413,7 @@ function HumanoidBody({ character }: { character: Character }) {
           </mesh>
         </group>
       ))}
-      {/* 骨盆：横向只比腰略宽、纵向有厚度。
-          旧版 scale 横向放到 hip*2.1，被压成一个大盘子，从机位看像「坐着」，
-          现在改回正常胯部体积，白模也能一眼看出是站立的人。 */}
+      {/* 骨盆：正常胯部体积，白模也能一眼看出是站立的人 */}
       <mesh position={[0, 0.95, 0]} scale={[hip * 1.12, 0.18, 0.17]} castShadow>
         <sphereGeometry args={[1, 16, 12]} />
         {Mat()}
@@ -238,21 +445,7 @@ function HumanoidBody({ character }: { character: Character }) {
           </mesh>
         </group>
       ))}
-      {/* 脖子 */}
-      <mesh position={[0, 1.555, 0]} castShadow>
-        <cylinderGeometry args={[0.048, 0.055, 0.12, 12]} />
-        {Mat(CLAY_DARK)}
-      </mesh>
-      {/* 头 */}
-      <mesh position={[0, headY, 0]} scale={[1, 1.14, 0.94]} castShadow>
-        <sphereGeometry args={[headR, 24, 20]} />
-        {Mat()}
-      </mesh>
-      {/* 朝向标记：极简鼻梁，白模也能看出人物面朝哪边 */}
-      <mesh position={[0, headY - 0.02, headR * 0.93]} rotation={[Math.PI / 2, 0, 0]}>
-        <coneGeometry args={[0.022, 0.06, 8]} />
-        {Mat(CLAY_DARK)}
-      </mesh>
+      <ClayHead y={1.7} r={headR} />
     </group>
   );
 }
