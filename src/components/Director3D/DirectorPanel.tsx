@@ -99,7 +99,7 @@ function Vector3Input({
                 border: '1px solid #dde4f0',
                 borderRadius: '4px',
                 padding: '3px 4px',
-                color: '#fff',
+                color: '#1f2937',
                 fontSize: '11px',
               }}
             />
@@ -179,7 +179,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
         background: '#eff3fa',
         borderRight: '1px solid #dde4f0',
         overflowY: 'auto',
-        color: '#fff',
+        color: '#1f2937',
       }}
     >
       {/* 顶部标题 */}
@@ -189,6 +189,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
           background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
           fontWeight: 700,
           fontSize: '14px',
+          color: '#fff',
         }}
       >
         🎬 3D 导演台
@@ -205,7 +206,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
               background: '#dbe3f2',
               border: 'none',
               borderRadius: '4px',
-              color: '#fff',
+              color: '#1f2937',
               cursor: 'pointer',
               fontSize: '12px',
               display: 'flex',
@@ -310,7 +311,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
                 border: '1px solid #dde4f0',
                 borderRadius: '4px',
                 padding: '4px',
-                color: '#fff',
+                color: '#1f2937',
                 fontSize: '11px',
                 marginBottom: '6px',
               }}
@@ -369,7 +370,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
                     hairColor: config.hairColor,
                   });
                 }}
-                style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#fff', fontSize: '11px' }}
+                style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#1f2937', fontSize: '11px' }}
               >
                 {CHARACTER_TEMPLATES.map(t => (
                   <option key={t.value} value={t.value}>{t.label} - {t.desc}</option>
@@ -570,7 +571,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
                 background: '#dbe3f2',
                 border: 'none',
                 borderRadius: '4px',
-                color: '#fff',
+                color: '#1f2937',
                 cursor: 'pointer',
                 fontSize: '11px',
               }}
@@ -685,7 +686,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
               type="text"
               value={activeCamera.name}
               onChange={(e) => updateCamera(activeCamera.id, { name: e.target.value })}
-              style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#fff', fontSize: '11px', marginBottom: '6px' }}
+              style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#1f2937', fontSize: '11px', marginBottom: '6px' }}
             />
             <Vector3Input
               label="机位位置"
@@ -702,7 +703,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
               <select
                 value={activeCamera.aspect}
                 onChange={(e) => updateCamera(activeCamera.id, { aspect: e.target.value })}
-                style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#fff', fontSize: '11px' }}
+                style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#1f2937', fontSize: '11px' }}
               >
                 {ASPECT_RATIOS.map((a) => (
                   <option key={a.value} value={a.value}>{a.label}</option>
@@ -714,7 +715,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
               <select
                 value={activeCamera.movement}
                 onChange={(e) => updateCamera(activeCamera.id, { movement: e.target.value as any })}
-                style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#fff', fontSize: '11px' }}
+                style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#1f2937', fontSize: '11px' }}
               >
                 {CAMERA_MOVEMENTS.map((m) => (
                   <option key={m.value} value={m.value}>{m.label}</option>
@@ -760,7 +761,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
               setSelectedSceneTemplate(e.target.value);
               applySceneTemplate(e.target.value as any);
             }}
-            style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '5px', color: '#fff', fontSize: '11px' }}
+            style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '5px', color: '#1f2937', fontSize: '11px' }}
           >
             {SCENE_TEMPLATES.map(t => (
               <option key={t.value} value={t.value}>{t.label} - {t.desc}</option>
@@ -812,7 +813,7 @@ export function DirectorPanel({ project, update, log }: { project?: any; update?
             <select
               value={scene.selectedEpisodeId || ''}
               onChange={(e) => { updateScene({ selectedEpisodeId: e.target.value }); setSceneList([]); }}
-              style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#fff', fontSize: '11px' }}
+              style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#1f2937', fontSize: '11px' }}
             >
               <option value="">请选择集数</option>
               {(project?.episodes || []).map((ep: any, i: number) => (
@@ -884,7 +885,7 @@ ${episodeContent.substring(0, 3000)}`;
                   const sceneItem = sceneList.find(s => s.name === e.target.value);
                   updateScene({ selectedSceneName: e.target.value, scenePrompt: sceneItem?.description || '' });
                 }}
-                style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#fff', fontSize: '11px' }}
+                style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#1f2937', fontSize: '11px' }}
               >
                 <option value="">请选择场景</option>
                 {sceneList.map((s, i) => (
@@ -901,7 +902,7 @@ ${episodeContent.substring(0, 3000)}`;
               value={scene.scenePrompt || ''}
               onChange={(e) => updateScene({ scenePrompt: e.target.value })}
               placeholder="场景描述，用于生成场景概念图"
-              style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#fff', fontSize: '11px', minHeight: '50px', resize: 'vertical' }}
+              style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '4px', color: '#1f2937', fontSize: '11px', minHeight: '50px', resize: 'vertical' }}
             />
           </div>
 
@@ -994,7 +995,7 @@ ${episodeContent.substring(0, 3000)}`;
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
             void saveBlob('director-scene.json', blob, { log });
           }}
-          style={{ width: '100%', padding: '6px', background: '#dbe3f2', border: 'none', borderRadius: '4px', color: '#fff', cursor: 'pointer', fontSize: '12px', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+          style={{ width: '100%', padding: '6px', background: '#dbe3f2', border: 'none', borderRadius: '4px', color: '#1f2937', cursor: 'pointer', fontSize: '12px', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
         >
           <Download size={12} /> 导出场景配置
         </button>

@@ -14,6 +14,7 @@ import { VoiceStep, VoiceContext, FinalMixStep, MixContext, ExportStep, ExportCo
 import { MultiTrackEditor } from './MultiTrackEditor';
 import { InfiniteCanvas } from '../InfiniteCanvas';
 import { collectProjectAssets } from '../InfiniteCanvas/projectAssets';
+import { Director3D } from '../Director3D';
 import { AutoPipelinePanel } from './AutoPipelinePanel';
 import { Btn, Icon } from './ui';
 // 弹窗
