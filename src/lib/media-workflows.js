@@ -28,13 +28,15 @@ import {
  */
 export async function generatePanelVideo({
   engine = 'h3', mode = 'i2v', prompt = '', negative = '', images = [],
-  firstFrame = '', lastFrame = '', duration = 5, ratio = '9:16', seed,
-  audio = '', onProgress = () => {}, signal, timeoutMs,
+  firstFrame = '', lastFrame = '', duration = 5, ratio = '9:16', quality = '',
+  seed, audio = '', onProgress = () => {}, signal, timeoutMs,
 } = {}) {
   if (!String(prompt || '').trim()) throw new Error('请先填写画面提示词');
   // 🔴 三类素材语义不同，必须各自独立下发，绝不能互相顶替：
   //   首帧/尾帧 = 画面起止帧；参考图 = 身份/风格约束；参考音频 = 声音线索。
   //   所以这里**不做**任何「没首帧就拿参考图顶上」的兜底 —— 没有的就是没有。
+  // 🔴 quality（480p/720p/1080p）必须随行下发：只传 ratio 时模型只能用自身默认分辨率，
+  //    表现就是「界面选 1080P、实际出 768P」。像素换算在 providers 层统一做。
   const out = await pGenerateVideo({
     prompt,
     first_frame: firstFrame,
@@ -44,6 +46,7 @@ export async function generatePanelVideo({
     negative,
     duration,
     ratio,
+    quality,
     engine,
     mode,
     onProgress,
@@ -51,7 +54,7 @@ export async function generatePanelVideo({
     timeoutMs,
   });
   onProgress(100, '完成');
-  return { resultUrl: out.resultUrl, workflowId: 'video' };
+  return { resultUrl: out.resultUrl, workflowId: 'video', warnings: out.warnings || [] };
 }
 
 /**

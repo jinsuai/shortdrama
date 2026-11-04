@@ -180,6 +180,9 @@ function normalizeVideoPayload(p = {}) {
     const sz = resolutionToSize(p.resolution);
     if (sz) out.size = sz;
   }
+  // 🔴 原始档位字符串一并保留：工作流型服务的分辨率是枚举（768p竖 / 1080p竖…），
+  //    只看 size 认不出枚举选项，必须把「1080p竖」这条原始档位带给 provider 去挑选项。
+  if (p.resolution) out.quality = p.resolution;
   if (p.first_frame) out.first_frame = p.first_frame;       // 图生视频首帧
   if (p.last_frame) out.last_frame = p.last_frame;          // 图生视频尾帧
   const images = Array.isArray(p.images) ? p.images : collectIndexed(p, 'ref_image_');

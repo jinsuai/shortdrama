@@ -204,15 +204,32 @@ function fitNumber(v, rule) {
 }
 
 /**
- * 在枚举选项里挑一个跟我们要的画幅匹配的（9:16 竖屏 / 16:9 横屏 / 1:1 方屏）。
+ * 从枚举选项文本里抠出「画质档位」（短边像素数）。
+ * 兼容三种平台写法：1080p竖 / 1080p竖(1080*1920) / 1080*1920 竖屏。
+ * 抠不出来返回 null（该选项不带档位信息，只能按方向挑）。
+ */
+function parseTier(label) {
+  const s = String(label ?? '');
+  const pm = /(\d{3,4})\s*p\b/i.exec(s);
+  if (pm) return Number(pm[1]);
+  const wm = /(\d{3,4})\s*[*x×]\s*(\d{3,4})/i.exec(s);
+  if (wm) return Math.min(Number(wm[1]), Number(wm[2]));
+  return null;
+}
+
+/**
+ * 在枚举选项里挑一个跟我们要的「画质档位 + 画幅」匹配的。
  *
- * 🔴 两个坑，都是实测出来的：
+ * 🔴 三个坑，都是实测出来的：
+ *   ⓪ 平台枚举常写成「768p竖(768*1376)」这种带默认档位的形态，**默认值本身就是 768p**。
+ *      只按方向挑、见到默认值就返回，会让「用户选 1080P」永远落到 768P ——
+ *      所以画质档位（quality）必须参与挑选，且优先级高于平台默认值。
  *   ① 同类选项常按「低档→高档」排列（480p竖、768p竖、960p竖），只按方向取第一个
  *      会一路挑到最低画质 —— 所以默认值也符合画幅时优先用默认值。
  *   ② 不能写成「不是竖屏就当横屏」：1:1 方屏会被误判成横屏。必须竖/横各自显式识别，
  *      方屏优先找带「方/square/1:1」的选项，找不到就当作没指定方向，用平台默认值。
  */
-function pickEnumOption(rule, ratio) {
+function pickEnumOption(rule, ratio, quality) {
   const opts = Array.isArray(rule?.options) ? rule.options : [];
   if (!opts.length) return rule?.default ?? null;
   const labels = opts.map((o) => o?.label ?? o?.value ?? o);
@@ -228,6 +245,26 @@ function pickEnumOption(rule, ratio) {
     return true;                                             // 没指定方向 → 都算匹配，交给默认值
   };
   const def = rule?.default;
+
+  // 🔴 画质档位优先于「平台默认值」：用户选了 1080p，默认值是 768p竖 时也必须给 1080p。
+  //    旧实现只在方向内挑，且见到默认值就返回它 —— 「选 1080P 实际跑 768P」的根因。
+  const tier = parseTier(quality);
+  if (tier != null) {
+    const base = labels.filter(fits);
+    const pool = (isSquare && !base.length) ? [] : (base.length ? base : labels);
+    if (pool.length) {
+      const exact = pool.filter((l) => parseTier(l) === tier);
+      if (exact.length) return exact[0];
+      const scored = pool
+        .map((l) => ({ l, t: parseTier(l) }))
+        .filter((x) => x.t != null)
+        .sort((a, b) => Math.abs(a.t - tier) - Math.abs(b.t - tier) || b.t - a.t);
+      // 平台没有该档位 → 取最接近的（同距离时取高一档，宁高勿低）
+      if (scored.length) return scored[0].l;
+    }
+    // 选项全都不带档位 → 落到原来的方向逻辑
+  }
+
   // 方屏：平台没有方屏选项时不要硬套横屏，退回平台默认（通常就是竖屏）
   if (isSquare && !labels.some(fits) && def != null) return def;
   const matching = labels.filter(fits);
@@ -253,9 +290,10 @@ function pickEnumOption(rule, ratio) {
 /**
  * 把我们的标准素材映射到这条工作流的字段上。
  * std 形状（与 generateVideo / generateImage / generateTTS 的入参对齐）：
- *   { prompt, negative, images[], audios[], first_frame, last_frame, seconds, ratio, text }
- * 返回 { payload, missing, used }：missing 是「工作流必填但我们没有的素材」，
- * 交给上层翻译成人话报错，而不是硬着头皮发一个必然失败的请求。
+ *   { prompt, negative, images[], audios[], first_frame, last_frame, seconds, ratio, quality, text }
+ * 返回 { payload, missing, used, warnings }：missing 是「工作流必填但我们没有的素材」，
+ * 交给上层翻译成人话报错，而不是硬着头皮发一个必然失败的请求；
+ * warnings 是「降档/近似」这类不阻断但要说清的事（如平台没有 1080P，只能用 768P）。
  */
 export function mapInputs(rules, std = {}, extra = {}) {
   const entries = Object.entries(rules || {});
@@ -267,6 +305,7 @@ export function mapInputs(rules, std = {}, extra = {}) {
 
   const payload = {};
   const used = [];
+  const warnings = [];
   const filled = new Set();
   const imgQueue = [...(std.images || []), ...(std.referenceImages || [])].filter(Boolean);
   const audQueue = [...(std.audios || [])].filter(Boolean);
@@ -309,9 +348,18 @@ export function mapInputs(rules, std = {}, extra = {}) {
     put(n, v, rules[n]);
   });
 
-  // 分辨率：枚举里挑跟画幅匹配的
+  // 分辨率：枚举里挑「画质档位 + 画幅」都匹配的
   (buckets.ratio || []).forEach((n) => {
-    const v = pickEnumOption(rules[n], std.ratio ?? std.aspect_ratio);
+    const v = pickEnumOption(rules[n], std.ratio ?? std.aspect_ratio, std.quality ?? std.resolution);
+    // 平台没有用户要的那一档时，别静默降档：留一条警告，上层可据此提示「是平台不支持」。
+    const want = parseTier(std.quality ?? std.resolution);
+    const got = parseTier(v);
+    if (want != null && got != null && got !== want) {
+      warnings.push(`工作流「分辨率」没有 ${want}p 档位，本次实际使用「${v}」`);
+    } else if (String(v || '') === String(rules[n]?.default || '') && (std.quality || std.resolution)) {
+      // 选了档位却落到平台默认值：多半是平台根本没这一档（方向/档位都不匹配）
+      warnings.push(`工作流「分辨率」没有匹配所选画质的选项，本次使用了平台默认「${v}」`);
+    }
     put(n, v, rules[n]);
   });
 
@@ -342,7 +390,7 @@ export function mapInputs(rules, std = {}, extra = {}) {
     .filter(([name, rule]) => rule?.required && !filled.has(name))
     .map(([name, rule]) => ({ name, label: humanLabel(name, rule) }));
 
-  return { payload, missing, used };
+  return { payload, missing, used, warnings };
 }
 
 // ---------------------------------------------------------------------------
@@ -436,7 +484,9 @@ export async function runWorkflow({
     throw new Error('未选择工作流。请在「设置 → 模型配置」里点「选择工作流」挑一条。');
   }
   const meta = await getWorkflowRules(cfg, id, { signal });
-  const { payload, missing } = mapInputs(meta.rules, std, extra);
+  const { payload, missing, warnings = [] } = mapInputs(meta.rules, std, extra);
+  // 降档/近似这类事不阻断流程，但必须留痕 —— 否则用户只会看到「又给我出 768P」。
+  warnings.forEach((w) => console.warn('[workflow]', w));
   if (missing.length) {
     const need = missing.map((x) => x.label).join('、');
     throw new Error(
@@ -449,7 +499,7 @@ export async function runWorkflow({
   const done = await pollWorkflow(cfg, task, { timeoutMs, onProgress, signal });
   const url = pickResult(done.raw, modality);
   if (!url) throw new Error('工作流已完成，但返回里找不到可用的结果地址');
-  return { resultUrl: url, raw: done.raw, workflow: meta.name, payload };
+  return { resultUrl: url, raw: done.raw, workflow: meta.name, payload, warnings };
 }
 
 /**

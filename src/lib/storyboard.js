@@ -377,7 +377,13 @@ export function buildShotInstruction(shot = {}, opt = {}) {
     || String(shot.firstFramePrompt || '').trim()
     || String(shot.sceneDesc || '').trim();
   // 🔴 剥离 LLM 自带的英文风格段，只留中文画面内容（见 stripEnglishStyle）
-  const story = stripEnglishStyle(rawStory);
+  //    例外：用户直接写的就是整段英文（英文提示词本身完全合法，如
+  //    "Back view of a woman in a wedding dress walking toward a church…"），
+  //    整段会被剥离成空 —— 那样模型只收到「构图 + 画质 + 静止约束」，
+  //    画面内容一个字都没有，出图跟描述毫无关系。剥离后为空时保留原文。
+  const stripped = stripEnglishStyle(rawStory);
+  // 去掉结尾标点：段与段之间用「。」连接，英文提示词自带句点时会出现「.。」
+  const story = (stripped || String(rawStory).trim()).replace(/[。．.；;，,、\s]+$/, '');
   if (story) seg.push(story);
 
   // 🔴 构图去重：LLM 的画面描述里通常已经写了「中景 · 标准镜头 · 平视」，
@@ -587,6 +593,9 @@ export async function generateKeyframeShot({
   onLog?.('提交关键帧图生成（Q22多图参考 · ' + fRefs.length + ' 张参考图'
     + (charItems.length ? ` · ${charItems.length} 张角色图` : '')
     + (ownFrame ? ' · 含本镜分镜图' : '') + (ratio ? ' · ' + ratio : '') + '）…');
+  // 把最终指令原样打一条：用户填的词会被「构图/画质/静止约束」拼接，
+  // 不打出来就只能靠猜「为什么发出去的和填的不一样」。
+  onLog?.('首帧最终提示词：' + (instruction.length > 300 ? `${instruction.slice(0, 300)}…` : instruction));
   const out = await generateFlux2MultiRefImage({
     instruction, items: fItems, ratio: ratio || '9:16',
     negative: [DEFAULT_NEGATIVE, String(negative || '').trim()].filter(Boolean).join('，'),

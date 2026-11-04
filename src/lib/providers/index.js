@@ -64,7 +64,7 @@ async function generateViaWorkflow(modality, c, std, { onProgress, signal, timeo
   });
   const url = c.persistMedia === false ? out.resultUrl : await materializeUrl(out.resultUrl);
   if (modality === 'image') return { resultUrl: url, allUrls: [url], raw: out.raw };
-  return { resultUrl: url, raw: out.raw };
+  return { resultUrl: url, raw: out.raw, warnings: out.warnings || [] };
 }
 
 /** 文本生成（兼容旧 DispatchGlmClient.chat 的 messages 入参） */
@@ -214,6 +214,28 @@ export async function generateImage(prompt, opts = {}) {
 export const VIDEO_MODE_ALIAS = { t2v: 'text', i2v: 'keyframe', s2v: 'reference' };
 
 /**
+ * 画质档位 → 真实像素尺寸。p 数 = 短边，长边按画幅比例算并取偶（视频编码器要求偶数）。
+ *   1080p + 9:16 → 1080x1920    1080p + 16:9 → 1920x1080    1080p + 1:1 → 1080x1080
+ * 已经是 "WxH" 的档位透传。认不出档位返回空串（不发明 size 字段）。
+ */
+function sizeFromQuality(quality, ratio) {
+  const s = String(quality || '').trim();
+  if (!s) return '';
+  const px = /^(\d{3,5})\s*[x×*]\s*(\d{3,5})$/i.exec(s);
+  const even = (n) => (n % 2 === 0 ? n : n + 1);
+  if (px) return `${even(Number(px[1]))}x${even(Number(px[2]))}`;
+  const pm = /(\d{3,4})\s*p\b/i.exec(s);
+  if (!pm) return '';
+  const short = Number(pm[1]);
+  if (!short) return '';
+  const r = String(ratio || '');
+  if (/1:1|方|square/i.test(r)) return `${short}x${short}`;
+  if (/16:9|横|landscape|horizontal/i.test(r)) return `${even(Math.round(short * 16 / 9))}x${short}`;
+  // 竖屏（含未标注方向，按项目默认 9:16 处理）
+  return `${short}x${even(Math.round(short * 16 / 9))}`;
+}
+
+/**
  * 视频生成（纯 OpenAI 兼容语义，不绑定任何厂商，可对接 Agnes / Kling / Runway / Sora / 万相 / 清影…）。
  * 入参为标准视频参数：
  *   prompt, seconds(字符串"4"-"12"), aspect_ratio, size, mode(text|keyframe|reference),
@@ -222,13 +244,18 @@ export const VIDEO_MODE_ALIAS = { t2v: 'text', i2v: 'keyframe', s2v: 'reference'
  * 各家差异（创建路径 / 轮询路径 / 任务 id 字段名）一律交给「设置面板配置 + callMedia 通用提取」，
  * 不在此处写任何厂商特例 —— 因此换个模型只改配置，不改代码。
  */
-export async function generateVideo({ prompt, seconds, duration, aspect_ratio, ratio, size, mode, first_frame, last_frame, image, images, audios, negative, n, engine, onProgress, signal, timeoutMs } = {}) {
+export async function generateVideo({ prompt, seconds, duration, aspect_ratio, ratio, size, quality, mode, first_frame, last_frame, image, images, audios, negative, n, engine, onProgress, signal, timeoutMs } = {}) {
   const c = requireConfig('video');
   const payload = { prompt };
   const sec = seconds ?? duration;
   if (sec != null) payload.seconds = String(sec);
   payload.aspect_ratio = aspect_ratio ?? ratio ?? '16:9';
+  // 🔴 画质档位（480p/720p/1080p/1080p竖）必须落到真实像素：
+  //    以前只发 aspect_ratio，模型/工作流一律用自身默认（常见 768P），
+  //    于是「界面选 1080P、实际出 768P」。c.size 是用户在设置里写死的尺寸，优先级最高。
+  const autoSize = sizeFromQuality(quality, payload.aspect_ratio);
   if (size) payload.size = size;
+  else if (autoSize) payload.size = autoSize;
   if (c.size) payload.size = c.size;                        // 尺寸随厂商配置，不写死
   // 负向词开关（与图片一致：默认开，但只发送你填写的负向词，不自动补内置通用词——
   // 避免不支持该字段的服务直接 400）。字段名可配置（negativeField）。
@@ -250,6 +277,9 @@ export async function generateVideo({ prompt, seconds, duration, aspect_ratio, r
       prompt, negative, images: imgs, audios: aus,
       first_frame: ff, last_frame,
       seconds: sec, ratio: aspect_ratio ?? ratio,
+      // 工作流的分辨率字段是枚举（480p竖 / 768p竖(768*1376) / 1080p竖…），
+      // 必须把画质档位一起带下去，否则永远落到平台默认的 768P。
+      quality,
     }, { onProgress, signal, timeoutMs });
   }
 

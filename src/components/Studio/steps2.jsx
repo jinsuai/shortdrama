@@ -569,6 +569,10 @@ export function MotionStep({ project, update, log }) {
   const ratio = m.ratio || defaultRatio('video');
   const duration = m.duration || 5;
   const negative = m.negative || '';
+  // 画质档位（480p / 720p / 1080p）：右侧「画质规格 → 画质」写进 project.motion.quality。
+  // 🔴 必须真的下发 —— 只传 ratio 时模型/工作流用自己的默认分辨率（多为 768P），
+  //    用户看到的「选了 1080P」就成了摆设。
+  const quality = m.quality || '720p';
   const wf = videoWf(engine, 'i2v');
 
   /** 本页参数写回 project.motion（切步骤 / 刷新不丢） */
@@ -715,13 +719,21 @@ export function MotionStep({ project, update, log }) {
 
     const audio = await resolveAudio(idx);
 
-    const { resultUrl } = await generatePanelVideo({
+    // 画质/画幅也记一条：模型最终吃到的档位取决于「工作流枚举里有没有这一档」，
+    // 记下来才能判断是「没选上」还是「平台没有 1080P 这档」。
+    log?.(`第 ${idx + 1} 镜画质：${quality} · 画幅 ${ratio} · ${duration}s`);
+
+    const { resultUrl, warnings } = await generatePanelVideo({
       engine, mode: m.videoMode || '', prompt: finalPrompt, negative,
       images: refUrls, firstFrame: first, lastFrame: last,
-      duration, ratio, audio,
+      duration, ratio, quality,
+      audio,
       // 上游排队/限流的重试进度回传，让队列条目显示「等待上游空位」而不是干等
       onProgress,
     });
+    // 平台枚举里没有所选画质档位时（如根本没有 1080P），说清楚实际用了哪一档，
+    // 不能让人以为「选了 1080P 还是给我 768P」是又一次 bug。
+    (warnings || []).forEach((w) => log?.(`第 ${idx + 1} 镜：${w}`));
 
     // 🔴 播放修复：把成片拉回本地用 asset:// 播放（远程 URL 关机/签名过期就播不了）
     let playUrl = resultUrl;
@@ -1373,7 +1385,7 @@ export function MotionContext({ project, update }) {
   const negative = saved.negative || '';
   // 镜头类型：单镜头 / 多镜头叙事。持久化到 project.motion，并在视频提交提示词中注入「多镜头叙事」指令（见 genOne）。
   const [shotType, setShotType] = useState(saved.shotType || 'single');
-  const [res, setRes] = useState('720p');
+  const [res, setRes] = useState(saved.quality || '720p');
   const [batch, setBatch] = useState('1x');
   // 视频模型卡片：显示「设置 → 视频模型」里实配的模型名，不再写死厂商/工作流
   const videoOptions = useMemo(() => videoModelOptions(), []);
@@ -1439,7 +1451,8 @@ export function MotionContext({ project, update }) {
             </div>
             <div style={{ marginBottom: 10 }}>
               <div style={{ fontSize: 10.5, color: '#4b5563', marginBottom: 4 }}>{T.motion.resolution}</div>
-              <Seg options={RESOLUTIONS.map((r) => ({ key: r, label: r }))} value={res} onChange={setRes} />
+              <Seg options={RESOLUTIONS.map((r) => ({ key: r, label: r }))} value={res}
+                onChange={(v) => { setRes(v); put({ quality: v }); }} />
             </div>
             <div>
               <div style={{ fontSize: 10.5, color: '#4b5563', marginBottom: 4 }}>{T.motion.batch}</div>
