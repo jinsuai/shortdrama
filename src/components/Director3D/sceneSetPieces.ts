@@ -66,6 +66,21 @@ export const SCENE_SET_PIECES: Record<SceneTemplateType, SetPieceDef[]> = {
     },
   ],
 
+  // 拱门庭院：婚礼/过门/仪式类镜头。拱门（双立柱+横梁）置于后半区 z≈-2.2，三级台阶由前向后抬升，
+  // 红毯从原点一路铺到拱下；人物在原点起步、拾级走向拱门，机位由后前推正好框住整组。
+  arch: [
+    { name: '拱门左柱', type: 'cylinder', position: { x: -1.2, y: 1.4, z: -2.2 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 0.32, y: 2.8, z: 0.32 }, color: WOOD },
+    { name: '拱门右柱', type: 'cylinder', position: { x: 1.2, y: 1.4, z: -2.2 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 0.32, y: 2.8, z: 0.32 }, color: WOOD },
+    { name: '拱门横梁', type: 'box', position: { x: 0, y: 2.85, z: -2.2 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 2.8, y: 0.32, z: 0.32 }, color: GOLD },
+    { name: '拱顶花饰', type: 'box', position: { x: 0, y: 3.1, z: -2.2 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1.2, y: 0.4, z: 0.3 }, color: GREEN },
+    { name: '台阶1', type: 'box', position: { x: 0, y: 0.1, z: -0.9 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 3.2, y: 0.2, z: 0.9 }, color: CLAY_DK },
+    { name: '台阶2', type: 'box', position: { x: 0, y: 0.3, z: -1.4 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 3.0, y: 0.2, z: 0.8 }, color: CLAY_DK },
+    { name: '台阶3', type: 'box', position: { x: 0, y: 0.5, z: -1.9 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 2.8, y: 0.2, z: 0.8 }, color: CLAY_DK },
+    { name: '红毯', type: 'plane', position: { x: 0, y: 0.02, z: -1.2 }, rotation: { x: -Math.PI / 2, y: 0, z: 0 }, scale: { x: 1.3, y: 1, z: 3.4 }, color: '#b0413e' },
+    { name: '花柱左', type: 'cylinder', position: { x: -2.1, y: 0.5, z: -1.0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 0.22, y: 1.0, z: 0.22 }, color: GREEN },
+    { name: '花柱右', type: 'cylinder', position: { x: 2.1, y: 0.5, z: -1.0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 0.22, y: 1.0, z: 0.22 }, color: GREEN },
+  ],
+
   livingroom: [
     {
       name: '沙发', type: 'box', position: { x: -1.7, y: 0, z: -1.3 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, color: FABRIC,

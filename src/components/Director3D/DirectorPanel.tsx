@@ -262,6 +262,7 @@ const detectSceneTemplate = (shots: any[]): string | null => {
     : /卧室|床上|床头|卧房|寝室|酒店房间|民宿房间/.test(allText) ? 'bedroom'
     : /客厅|沙发|茶几|起居室|沙发区/.test(allText) ? 'livingroom'
     : /街道|马路|街边|巷|街头|路边|天桥|广场|停车场|人行道/.test(allText) ? 'street'
+    : /拱门|花门|婚礼|婚典|结婚|典礼|仪式|庭院|院子|花园|回廊|门廊|凯旋门|校门|教堂|红毯/.test(allText) ? 'arch'
     : null;
 };
 
