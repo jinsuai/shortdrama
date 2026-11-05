@@ -243,17 +243,25 @@ const computeLayout = (cast: string[]) =>
 
 /** 从分镜文本推断场景模板（地点关键词）；命中即套用命名布景件 */
 const detectSceneTemplate = (shots: any[]): string | null => {
+  // 分镜里真正含地点信息的是 imagePrompt / firstFramePrompt / videoPrompt（sceneDesc 存的其实是动作），
+  // 所以这里把画面相关的文本字段全扫一遍，命中率比只扫 title/sceneDesc 高得多。
   const allText = shots
-    .map((s) => [s?.title, s?.sceneDesc, s?.promptCn, s?.sceneType, s?.description, s?.action].filter(Boolean).join(' '))
+    .map((s) => [
+      s?.title, s?.sceneDesc, s?.description, s?.action, s?.promptCn,
+      s?.imagePrompt, s?.firstFramePrompt, s?.videoPrompt,
+      s?.sceneType, s?.shotType, s?.lensType,
+      Array.isArray(s?.characters) ? s.characters.join(' ') : s?.characters,
+    ].filter(Boolean).join(' '))
     .join(' ');
-  return /医院|病房|病床|输液/.test(allText) ? 'hospital'
-    : /酒吧|夜店|吧台/.test(allText) ? 'bar'
-    : /森林|树林|树丛|野外/.test(allText) ? 'forest'
-    : /宫殿|朝堂|龙椅|皇宫|侯府|厅/.test(allText) ? 'palace'
-    : /办公室|办公桌|工位/.test(allText) ? 'office'
-    : /卧室|床上|床头/.test(allText) ? 'bedroom'
-    : /客厅|沙发|茶几/.test(allText) ? 'livingroom'
-    : /街道|马路|街边|巷/.test(allText) ? 'street'
+  return /医院|病房|病床|输液|诊所|急诊|手术室|护士站|门诊/.test(allText) ? 'hospital'
+    : /酒吧|夜店|吧台|酒馆|KTV|清吧|夜总会/.test(allText) ? 'bar'
+    : /森林|树林|树丛|野外|丛林|山林|竹林|草地|山顶|郊外/.test(allText) ? 'forest'
+    // 注意：这里不能再放裸「厅」——否则"客厅/餐厅"会被误判成宫殿。
+    : /宫殿|皇宫|朝堂|龙椅|侯府|王府|府邸|大殿|殿堂|正殿|御书房|厅堂|正厅/.test(allText) ? 'palace'
+    : /办公室|办公桌|工位|会议室|写字楼|公司|职场|工区/.test(allText) ? 'office'
+    : /卧室|床上|床头|卧房|寝室|酒店房间|民宿房间/.test(allText) ? 'bedroom'
+    : /客厅|沙发|茶几|起居室|沙发区/.test(allText) ? 'livingroom'
+    : /街道|马路|街边|巷|街头|路边|天桥|广场|停车场|人行道/.test(allText) ? 'street'
     : null;
 };
 
@@ -425,13 +433,13 @@ export function DirectorPanel({
 
     applyStoryboardLayout({ characters: layoutChars, cameras: cameraDrafts });
 
-    // 场景氛围：从分镜文本里找地点关键词，命中就套用对应的命名布景件
-    const tpl = detectSceneTemplate(shots);
-    if (tpl) {
-      setSelectedSceneTemplate(tpl);
-      applySceneTemplate(tpl as any);
-    }
-    log?.(`已导入 ${shots.length} 个分镜：摆好 ${layoutChars.length} 个白模人物（含姿态），生成 ${cameraDrafts.length} 个机位${tpl ? '，并套用「' + SCENE_TEMPLATES.find((t) => t.value === tpl)?.label + '」场景' : ''}。接下来可直接在画布拖动人物/机位微调`);
+    // 场景氛围：从分镜文本里找地点关键词；整本都识别不到地点时用中性「通用」兜底，避免空舞台
+    const detected = detectSceneTemplate(shots);
+    const tpl = detected || 'generic';
+    const usedFallback = !detected;
+    setSelectedSceneTemplate(tpl);
+    applySceneTemplate(tpl as any);
+    log?.(`已导入 ${shots.length} 个分镜：摆好 ${layoutChars.length} 个白模人物（含姿态），生成 ${cameraDrafts.length} 个机位，并套用「${usedFallback ? '通用（未识别到地点）' : SCENE_TEMPLATES.find((t) => t.value === tpl)?.label}」场景。接下来可直接在画布拖动人物/机位微调`);
   };
 
   /**
@@ -491,15 +499,21 @@ export function DirectorPanel({
     appendShotToStage({ newCharacters: newChars, camera });
 
     // 自动搭建 / 切换场景：检测本镜地点关键词，与当前场景不同就自动换景。
-    // 保留人物站位、机位与用户自定义道具，只替换命名布景件——不打翻已有内容。
-    const tpl = detectSceneTemplate([sh]);
+    // 识别不到地点时：画布还空 → 用中性「通用」兜底（保证不是空舞台）；已有布景 → 保持不动。
+    // 无论哪种都只替换命名布景件，保留人物站位、机位与用户自定义道具。
+    const detected = detectSceneTemplate([sh]);
     const currentTpl = props.find((p) => p.setPieceId)?.setPieceId || 'empty';
+    const tpl = detected || (currentTpl === 'empty' ? 'generic' : null);
+    const usedFallback = !detected && tpl === 'generic';
     const sceneChanged = !!tpl && tpl !== currentTpl;
     if (sceneChanged) {
       setSelectedSceneTemplate(tpl as string);
       switchSceneTemplate(tpl as any);
     }
-    log?.(`已追加第 ${shotIndex + 1} 镜：${newChars.length ? '新增 ' + newChars.map((c) => c.name).join('、') + '，' : ''}生成 1 个机位${sceneChanged ? '，并自动套用「' + SCENE_TEMPLATES.find((t) => t.value === tpl)?.label + '」场景' : ''}。继续逐镜追加或拖动微调`);
+    const sceneNote = sceneChanged
+      ? '，并' + (usedFallback ? '（未识别到地点）套用中性「通用」布景' : '自动套用「' + SCENE_TEMPLATES.find((t) => t.value === tpl)?.label + '」场景')
+      : '';
+    log?.(`已追加第 ${shotIndex + 1} 镜：${newChars.length ? '新增 ' + newChars.map((c) => c.name).join('、') + '，' : ''}生成 1 个机位${sceneNote}。继续逐镜追加或拖动微调`);
   };
 
   return (

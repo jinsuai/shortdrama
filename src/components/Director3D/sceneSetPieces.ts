@@ -19,6 +19,53 @@ const GREEN = '#9fb89a';
 export const SCENE_SET_PIECES: Record<SceneTemplateType, SetPieceDef[]> = {
   empty: [],
 
+  // 中性室内：未识别出具体地点时的兜底。只给「一个空间」的骨架（墙/地毯/桌/椅/灯），
+  // 不假装是某个具体场景，用户看清空间关系后再在下拉里换成真实场景即可。
+  generic: [
+    {
+      name: '背景墙', type: 'box', position: { x: 0, y: 1.5, z: -5 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, color: CLAY_LT,
+      parts: [
+        { shape: 'box', size: { x: 7.6, y: 3, z: 0.16 }, offset: { x: 0, y: 0, z: 0 }, color: CLAY_LT },
+        { shape: 'box', size: { x: 7.6, y: 0.12, z: 0.2 }, offset: { x: 0, y: 1.5, z: 0 }, color: CLAY_DK },
+      ],
+    },
+    { name: '地毯', type: 'plane', position: { x: 0, y: 0.012, z: -1.5 }, rotation: { x: -Math.PI / 2, y: 0, z: 0 }, scale: { x: 1.9, y: 1, z: 1.5 }, color: FABRIC },
+    {
+      name: '长桌', type: 'box', position: { x: 0, y: 0, z: -1.8 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, color: WOOD,
+      parts: [
+        { shape: 'box', size: { x: 1.8, y: 0.1, z: 0.85 }, offset: { x: 0, y: 0.75, z: 0 }, color: WOOD },
+        { shape: 'box', size: { x: 0.08, y: 0.75, z: 0.08 }, offset: { x: -0.82, y: 0.375, z: -0.35 }, color: CLAY_DK },
+        { shape: 'box', size: { x: 0.08, y: 0.75, z: 0.08 }, offset: { x: 0.82, y: 0.375, z: -0.35 }, color: CLAY_DK },
+        { shape: 'box', size: { x: 0.08, y: 0.75, z: 0.08 }, offset: { x: -0.82, y: 0.375, z: 0.35 }, color: CLAY_DK },
+        { shape: 'box', size: { x: 0.08, y: 0.75, z: 0.08 }, offset: { x: 0.82, y: 0.375, z: 0.35 }, color: CLAY_DK },
+      ],
+    },
+    {
+      name: '座椅1', type: 'box', position: { x: -1.25, y: 0, z: -1.5 }, rotation: { x: 0, y: Math.PI / 2, z: 0 }, scale: { x: 1, y: 1, z: 1 }, color: FABRIC,
+      parts: [
+        { shape: 'box', size: { x: 0.5, y: 0.1, z: 0.5 }, offset: { x: 0, y: 0.45, z: 0 }, color: FABRIC },
+        { shape: 'box', size: { x: 0.5, y: 0.55, z: 0.1 }, offset: { x: 0, y: 0.72, z: -0.2 }, color: CLAY_LT },
+        { shape: 'box', size: { x: 0.44, y: 0.45, z: 0.44 }, offset: { x: 0, y: 0.22, z: 0 }, color: CLAY_DK },
+      ],
+    },
+    {
+      name: '座椅2', type: 'box', position: { x: 1.25, y: 0, z: -1.5 }, rotation: { x: 0, y: -Math.PI / 2, z: 0 }, scale: { x: 1, y: 1, z: 1 }, color: FABRIC,
+      parts: [
+        { shape: 'box', size: { x: 0.5, y: 0.1, z: 0.5 }, offset: { x: 0, y: 0.45, z: 0 }, color: FABRIC },
+        { shape: 'box', size: { x: 0.5, y: 0.55, z: 0.1 }, offset: { x: 0, y: 0.72, z: -0.2 }, color: CLAY_LT },
+        { shape: 'box', size: { x: 0.44, y: 0.45, z: 0.44 }, offset: { x: 0, y: 0.22, z: 0 }, color: CLAY_DK },
+      ],
+    },
+    {
+      name: '落地灯', type: 'cylinder', position: { x: 2.9, y: 0, z: -2.4 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, color: METAL,
+      parts: [
+        { shape: 'cylinder', size: { x: 0.36, y: 0.06, z: 0.36 }, offset: { x: 0, y: 0.03, z: 0 }, color: CLAY_DK },
+        { shape: 'cylinder', size: { x: 0.06, y: 1.5, z: 0.06 }, offset: { x: 0, y: 0.78, z: 0 }, color: METAL },
+        { shape: 'cylinder', size: { x: 0.4, y: 0.34, z: 0.4 }, offset: { x: 0, y: 1.62, z: 0 }, color: CLAY_LT },
+      ],
+    },
+  ],
+
   livingroom: [
     {
       name: '沙发', type: 'box', position: { x: -1.7, y: 0, z: -1.3 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, color: FABRIC,

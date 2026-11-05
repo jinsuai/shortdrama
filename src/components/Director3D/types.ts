@@ -149,7 +149,7 @@ export const CAMERA_MOVEMENTS = [
   { label: '环绕', value: 'orbit' },
 ];
 
-export type SceneTemplateType = 'empty' | 'bedroom' | 'livingroom' | 'office' | 'street' | 'palace' | 'forest' | 'bar' | 'hospital';
+export type SceneTemplateType = 'empty' | 'generic' | 'bedroom' | 'livingroom' | 'office' | 'street' | 'palace' | 'forest' | 'bar' | 'hospital';
 
 export interface SceneTemplate {
   value: SceneTemplateType;
@@ -167,6 +167,7 @@ export interface SceneTemplate {
 
 export const SCENE_TEMPLATES: SceneTemplate[] = [
   { value: 'empty', label: '空场景', desc: '纯色背景，自由搭建', background: '#e6ecf8', groundColor: '#E6ECF8', ambientLight: 0.6, directionalLight: 1.2, fogEnabled: true, fogColor: '#e6ecf8', fogDensity: 0.02 },
+  { value: 'generic', label: '通用', desc: '中性室内布景（未识别地点时默认）', background: '#E4E9F4', groundColor: '#b8b3a8', wallColor: '#dbe2ec', ambientLight: 0.7, directionalLight: 0.9, fogEnabled: false, fogColor: '#E4E9F4', fogDensity: 0 },
   { value: 'bedroom', label: '卧室', desc: '温馨的卧室场景', background: '#DDE4F0', groundColor: '#8b7355', wallColor: '#d4c5a9', ambientLight: 0.7, directionalLight: 0.8, fogEnabled: false, fogColor: '#DDE4F0', fogDensity: 0 },
   { value: 'livingroom', label: '客厅', desc: '现代客厅场景', background: '#DDE4F0', groundColor: '#a0826d', wallColor: '#e8ddd0', ambientLight: 0.75, directionalLight: 0.9, fogEnabled: false, fogColor: '#DDE4F0', fogDensity: 0 },
   { value: 'office', label: '办公室', desc: '现代办公场景', background: '#DDE4F0', groundColor: '#4b5563', wallColor: '#4b5563', ambientLight: 0.8, directionalLight: 1.0, fogEnabled: false, fogColor: '#DDE4F0', fogDensity: 0 },
