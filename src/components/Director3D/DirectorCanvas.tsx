@@ -506,50 +506,73 @@ function PropMesh({ prop }: { prop: Prop }) {
   const selectedPropId = useDirectorStore((s) => s.selectedPropId);
   const selectProp = useDirectorStore((s) => s.selectProp);
   const isSelected = selectedPropId === prop.id;
-  const meshRef = useRef<THREE.Mesh>(null);
+  const groupRef = useRef<THREE.Group>(null);
 
   useFrame(() => {
-    if (meshRef.current) {
-      meshRef.current.position.set(prop.position.x, prop.position.y, prop.position.z);
-      meshRef.current.rotation.set(prop.rotation.x, prop.rotation.y, prop.rotation.z);
-      meshRef.current.scale.set(prop.scale.x, prop.scale.y, prop.scale.z);
+    if (groupRef.current) {
+      groupRef.current.position.set(prop.position.x, prop.position.y, prop.position.z);
+      groupRef.current.rotation.set(prop.rotation.x, prop.rotation.y, prop.rotation.z);
+      groupRef.current.scale.set(prop.scale.x, prop.scale.y, prop.scale.z);
     }
   });
 
-  const renderGeometry = () => {
+  const matProps = (color?: string) => ({
+    color: color || prop.color || '#cdd5e2',
+    roughness: 0.9,
+    metalness: 0,
+    emissive: isSelected ? '#4facfe' : '#000',
+    emissiveIntensity: isSelected ? 0.22 : 0,
+  });
+
+  const singleGeo = () => {
     switch (prop.type) {
-      case 'sphere':
-        return <sphereGeometry args={[0.5, 24, 18]} />;
-      case 'cylinder':
-        return <cylinderGeometry args={[0.5, 0.5, 1, 24]} />;
-      case 'plane':
-        return <planeGeometry args={[2, 2]} />;
-      case 'box':
-      default:
-        return <boxGeometry args={[1, 1, 1]} />;
+      case 'sphere': return <sphereGeometry args={[0.5, 24, 18]} />;
+      case 'cylinder': return <cylinderGeometry args={[0.5, 0.5, 1, 24]} />;
+      case 'plane': return <planeGeometry args={[2, 2]} />;
+      default: return <boxGeometry args={[1, 1, 1]} />;
     }
   };
 
-  return (
+  const renderPart = (part: any, key: number) => (
     <mesh
-      ref={meshRef}
+      key={key}
+      position={[part.offset?.x || 0, part.offset?.y || 0, part.offset?.z || 0]}
+      rotation={[part.rotation?.x || 0, part.rotation?.y || 0, part.rotation?.z || 0]}
+      scale={[part.size.x, part.size.y, part.size.z]}
       castShadow
       receiveShadow
+    >
+      {part.shape === 'sphere' ? <sphereGeometry args={[0.5, 24, 18]} />
+        : part.shape === 'cylinder' ? <cylinderGeometry args={[0.5, 0.5, 1, 24]} />
+        : part.shape === 'plane' ? <planeGeometry args={[2, 2]} />
+        : <boxGeometry args={[1, 1, 1]} />}
+      <meshStandardMaterial {...matProps(part.color)} side={THREE.DoubleSide} />
+    </mesh>
+  );
+
+  return (
+    <group
+      ref={groupRef}
       onClick={(e) => {
         e.stopPropagation();
         selectProp(prop.id);
       }}
     >
-      {renderGeometry()}
-      <meshStandardMaterial
-        color={CLAY_DARK}
-        roughness={0.88}
-        metalness={0}
-        emissive={isSelected ? '#4facfe' : '#000'}
-        emissiveIntensity={isSelected ? 0.22 : 0}
-        side={THREE.DoubleSide}
-      />
-    </mesh>
+      {prop.parts && prop.parts.length ? (
+        prop.parts.map((p, i) => renderPart(p, i))
+      ) : (
+        <mesh castShadow receiveShadow>
+          {singleGeo()}
+          <meshStandardMaterial {...matProps()} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+      {isSelected && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
+          <ringGeometry args={[0.7, 0.84, 32]} />
+          <meshBasicMaterial color="#4facfe" side={THREE.DoubleSide} />
+        </mesh>
+      )}
+    </group>
   );
 }
 

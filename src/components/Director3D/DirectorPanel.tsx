@@ -196,6 +196,67 @@ function TimelineBar() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// 分镜 → 白模站位 / 机位 的确定性推导（纯前端，不依赖模型 API）
+// ─────────────────────────────────────────────────────────────
+
+const shotNamesOf = (sh: any): string[] =>
+  (Array.isArray(sh?.characters) ? sh.characters : [])
+    .map((n: any) => String(typeof n === 'string' ? n : n?.name || n?.character || '').trim())
+    .filter(Boolean);
+
+const inferPose = (text: string): CharacterPose => {
+  if (/坐|落座|椅|沙发|餐桌|床沿|端坐/.test(text)) return 'sit';
+  if (/蹲|跪|俯身|弯腰|捡拾|伏低/.test(text)) return 'squat';
+  if (/走|跑|奔|冲|迈步|入场|离开|追|赶/.test(text)) return 'walk';
+  return 'stand';
+};
+
+const sceneSizeOf = (t: string) =>
+  /远景/.test(t) ? { dist: 9, fov: 55, y: 2.4 }
+    : /全景/.test(t) ? { dist: 6.5, fov: 50, y: 2.0 }
+    : /近景/.test(t) ? { dist: 2.4, fov: 40, y: 1.6 }
+    : /特写/.test(t) ? { dist: 1.6, fov: 35, y: 1.5 }
+    : { dist: 4, fov: 45, y: 1.7 };
+
+const moveOf = (t: string) =>
+  /推/.test(t) ? 'push' : /拉/.test(t) ? 'pull' : /摇/.test(t) ? 'pan'
+    : /升降|俯仰/.test(t) ? 'tilt' : /移|跟/.test(t) ? 'track'
+    : /环绕|旋转/.test(t) ? 'orbit' : 'static';
+
+/** 给定一组出场人名，算出相对站位：双人面对 / 多人弧线 / 单人原点 */
+const computeLayout = (cast: string[]) =>
+  cast.map((name, i) => {
+    let position = { x: 0, y: 0, z: 0 };
+    let rotation = { x: 0, y: 0, z: 0 };
+    if (cast.length === 2) {
+      position = i === 0 ? { x: -1.1, y: 0, z: 0 } : { x: 1.1, y: 0, z: 0 };
+      rotation = { x: 0, y: i === 0 ? Math.PI / 2 : -Math.PI / 2, z: 0 };
+    } else if (cast.length > 2) {
+      const a = (i / (cast.length - 1) - 0.5) * Math.PI * 0.9;
+      const r = 2.2;
+      position = { x: Math.sin(a) * r, y: 0, z: -Math.cos(a) * r + 0.6 };
+      rotation = { x: 0, y: -a, z: 0 };
+    }
+    return { name, position, rotation };
+  });
+
+/** 从分镜文本推断场景模板（地点关键词）；命中即套用命名布景件 */
+const detectSceneTemplate = (shots: any[]): string | null => {
+  const allText = shots
+    .map((s) => [s?.title, s?.sceneDesc, s?.promptCn, s?.sceneType, s?.description, s?.action].filter(Boolean).join(' '))
+    .join(' ');
+  return /医院|病房|病床|输液/.test(allText) ? 'hospital'
+    : /酒吧|夜店|吧台/.test(allText) ? 'bar'
+    : /森林|树林|树丛|野外/.test(allText) ? 'forest'
+    : /宫殿|朝堂|龙椅|皇宫|侯府|厅/.test(allText) ? 'palace'
+    : /办公室|办公桌|工位/.test(allText) ? 'office'
+    : /卧室|床上|床头/.test(allText) ? 'bedroom'
+    : /客厅|沙发|茶几/.test(allText) ? 'livingroom'
+    : /街道|马路|街边|巷/.test(allText) ? 'street'
+    : null;
+};
+
 export function DirectorPanel({
   project,
   update,
@@ -238,6 +299,7 @@ export function DirectorPanel({
     moveCamera,
     replaceCameras,
     applyStoryboardLayout,
+    appendShotToStage,
     updateScene,
     applySceneTemplate,
     toggleGrid,
@@ -248,6 +310,7 @@ export function DirectorPanel({
   const selectedChar = characters.find((c) => c.id === selectedCharacterId);
   const selectedPropItem = props.find((p) => p.id === selectedPropId);
   const activeCamera = cameras.find((c) => c.id === activeCameraId);
+  const shotsList = (Array.isArray(project?.shots) ? project.shots : []).filter(Boolean).slice(0, 48);
 
   /** 新增机位：对着第一个角色自动取一个可看的构图位，而不是硬编码 [8,6,8] */
   const handleAddCameraFromView = () => {
@@ -298,91 +361,50 @@ export function DirectorPanel({
   };
 
   /**
-   * 从项目分镜一键生成白模预演：确定性推导，不依赖模型 API。
-   * 白模场景只有一套站位、时间轴按机位顺序切镜，因此这里把「所有出场人物」摆成一个
-   * 基础站位（双人面对面 / 多人半圆弧 / 单人原点），再给每个分镜生成一个机位。
-   * 导入后用户拖动人物/机位即可微调，姿态用选中角色的下拉框随时改。
+   * 一键全导入（搭骨架）：整体替换人物站位（含姿态）与机位，并按关键词套用场景布景。
+   * 适合从空白开始一次性铺出整场戏的预演骨架，之后逐镜微调。
    */
   const handleImportStoryboard = () => {
-    const shots = (Array.isArray(project?.shots) ? project.shots : []).filter(Boolean).slice(0, 24);
+    const shots = shotsList.slice(0, 24);
     if (shots.length === 0) {
       log?.('项目里还没有分镜，请先在「03 分镜」拆分剧本');
       alert('项目里还没有分镜，请先在「03 分镜」拆分剧本，再回来一键摆位。');
       return;
     }
 
-    // 出场人物名：兼容 ["角色名"] / [{name:"角色名"}] 两种写法，保持首次出现顺序
-    const namesOf = (sh: any): string[] =>
-      (Array.isArray(sh?.characters) ? sh.characters : [])
-        .map((n: any) => String(typeof n === 'string' ? n : n?.name || n?.character || '').trim())
-        .filter(Boolean);
+    // 出场人物名：保持首次出现顺序、去重
     const cast: string[] = [];
     for (const sh of shots) {
-      for (const n of namesOf(sh)) if (!cast.includes(n)) cast.push(n);
+      for (const n of shotNamesOf(sh)) if (!cast.includes(n)) cast.push(n);
     }
     if (cast.length === 0) cast.push('主角');
 
-    // 项目人物库：只用来取性别/体型，取不到就走标准男性
     const lib: any[] = project?.materials?.characters || project?.characters || project?.outline?.characters || [];
 
-    // 姿态：按该角色第一次出场的画面描述/台词里的动作词推断
-    const poseOf = (name: string): CharacterPose => {
-      const sh = shots.find((s: any) => namesOf(s).includes(name));
-      const text = [sh?.title, sh?.sceneDesc, sh?.description, sh?.action, sh?.dialogue, sh?.promptCn]
-        .filter(Boolean).join(' ');
-      if (/坐|落座|椅|沙发|餐桌|床沿|端坐/.test(text)) return 'sit';
-      if (/蹲|跪|俯身|弯腰|捡拾|伏低/.test(text)) return 'squat';
-      if (/走|跑|奔|冲|迈步|入场|离开|追|赶/.test(text)) return 'walk';
-      return 'stand';
-    };
-
-    // 站位：双人面对面对话 / 多人半圆弧 / 单人原点
-    const layoutChars = cast.map((name, i) => {
+    const layoutChars = cast.map((name) => {
       const info = lib.find((c: any) => c?.name === name) || {};
       const female = info.gender === '女' || info.gender === 'female' || /女/.test(String(info.role || ''));
-      let position = { x: 0, y: 0, z: 0 };
-      let rotation = { x: 0, y: 0, z: 0 };
-      if (cast.length === 2) {
-        position = i === 0 ? { x: -1.1, y: 0, z: 0 } : { x: 1.1, y: 0, z: 0 };
-        rotation = { x: 0, y: i === 0 ? Math.PI / 2 : -Math.PI / 2, z: 0 };
-      } else if (cast.length > 2) {
-        const a = (i / (cast.length - 1) - 0.5) * Math.PI * 0.9;
-        const r = 2.2;
-        position = { x: Math.sin(a) * r, y: 0, z: -Math.cos(a) * r + 0.6 };
-        rotation = { x: 0, y: -a, z: 0 };
-      }
+      // 姿态取该角色第一次出场的画面关键词
+      const sh = shots.find((s: any) => shotNamesOf(s).includes(name));
+      const pose = inferPose([sh?.title, sh?.sceneDesc, sh?.description, sh?.action, sh?.dialogue, sh?.promptCn].filter(Boolean).join(' '));
+      const L = computeLayout(cast).find((l) => l.name === name)!;
       return {
         name,
-        position,
-        rotation,
+        position: L.position,
+        rotation: L.rotation,
         scale: 1,
         color: female ? '#e8a0bf' : '#4a90d9',
         template: female ? 'female_standard' : 'male_standard',
         gender: female ? 'female' : 'male',
         outfit: female ? '#c0392b' : '#cbd5e4',
         hairColor: '#2d1810',
-        pose: poseOf(name),
+        pose,
       };
     });
 
-    // 场景模板的道具都堆在原点附近，人物整体前移到布景前方，避免被沙发/茶几挡住
-    layoutChars.forEach((c) => { c.position.z += 2.4; });
-
-    // 景别 → 机位距离/焦距/高度；运镜中文 → 画布支持的运镜枚举
-    const sizeOf = (t: string) =>
-      /远景/.test(t) ? { dist: 9, fov: 55, y: 2.4 }
-        : /全景/.test(t) ? { dist: 6.5, fov: 50, y: 2.0 }
-        : /近景/.test(t) ? { dist: 2.4, fov: 40, y: 1.6 }
-        : /特写/.test(t) ? { dist: 1.6, fov: 35, y: 1.5 }
-        : { dist: 4, fov: 45, y: 1.7 };
-    const moveOf = (t: string) =>
-      /推/.test(t) ? 'push' : /拉/.test(t) ? 'pull' : /摇/.test(t) ? 'pan'
-        : /升降|俯仰/.test(t) ? 'tilt' : /移|跟/.test(t) ? 'track'
-        : /环绕|旋转/.test(t) ? 'orbit' : 'static';
-
     const cameraDrafts = shots.map((sh: any, i: number) => {
-      const size = sizeOf(String(sh?.sceneType || ''));
-      const inShot = namesOf(sh).map((n) => layoutChars.find((c) => c.name === n)).filter(Boolean) as any[];
+      const size = sceneSizeOf(String(sh?.sceneType || ''));
+      const inShot = shotNamesOf(sh).map((n) => layoutChars.find((c) => c.name === n)).filter(Boolean) as any[];
       const pts = inShot.length ? inShot : [layoutChars[0]];
       const tx = pts.reduce((a, c) => a + c.position.x, 0) / pts.length;
       const tz = pts.reduce((a, c) => a + c.position.z, 0) / pts.length;
@@ -402,22 +424,78 @@ export function DirectorPanel({
 
     applyStoryboardLayout({ characters: layoutChars, cameras: cameraDrafts });
 
-    // 场景氛围：从分镜文本里找地点关键词，命中就套用对应的素模场景模板
-    const allText = shots.map((s: any) => [s?.title, s?.sceneDesc, s?.promptCn, s?.sceneType].filter(Boolean).join(' ')).join(' ');
-    const tpl = /医院|病房|病床|输液/.test(allText) ? 'hospital'
-      : /酒吧|夜店|吧台/.test(allText) ? 'bar'
-      : /森林|树林|树丛|野外/.test(allText) ? 'forest'
-      : /宫殿|朝堂|龙椅|皇宫/.test(allText) ? 'palace'
-      : /办公室|办公桌|工位/.test(allText) ? 'office'
-      : /卧室|床上|床头/.test(allText) ? 'bedroom'
-      : /客厅|沙发|茶几/.test(allText) ? 'livingroom'
-      : /街道|马路|街边|巷/.test(allText) ? 'street'
-      : null;
+    // 场景氛围：从分镜文本里找地点关键词，命中就套用对应的命名布景件
+    const tpl = detectSceneTemplate(shots);
     if (tpl) {
       setSelectedSceneTemplate(tpl);
       applySceneTemplate(tpl as any);
     }
-    log?.(`已导入 ${shots.length} 个分镜：摆好 ${layoutChars.length} 个白模人物（含姿态），生成 ${cameraDrafts.length} 个机位${tpl ? '，并套用「' + SCENE_TEMPLATES.find((t) => t.value === tpl)?.label + '」场景' : ''}。接下来直接拖动人物/机位微调即可`);
+    log?.(`已导入 ${shots.length} 个分镜：摆好 ${layoutChars.length} 个白模人物（含姿态），生成 ${cameraDrafts.length} 个机位${tpl ? '，并套用「' + SCENE_TEMPLATES.find((t) => t.value === tpl)?.label + '」场景' : ''}。接下来可直接在画布拖动人物/机位微调`);
+  };
+
+  /**
+   * 逐镜追加：只新增该镜出场、且尚不存在于画布的人物（按名去重、复用已有站位），
+   * 并追加这镜一个机位。不打翻已有的布景与站位，更符合「一镜一镜精修」的实际工作流。
+   */
+  const handleAppendShot = (shotIndex: number) => {
+    const sh = shotsList[shotIndex];
+    if (!sh) return;
+    const names = shotNamesOf(sh);
+    const castNames = names.length ? names : ['主角'];
+    const lib: any[] = project?.materials?.characters || project?.characters || project?.outline?.characters || [];
+
+    const shotText = [sh?.title, sh?.sceneDesc, sh?.description, sh?.action, sh?.dialogue, sh?.promptCn].filter(Boolean).join(' ');
+    const pose = inferPose(shotText);
+
+    const layout = computeLayout(castNames);
+    const newChars: any[] = [];
+    const posOf: Record<string, { x: number; y: number; z: number }> = {};
+    for (const name of castNames) {
+      const ex = characters.find((c) => c.name === name);
+      if (ex) { posOf[name] = ex.position; continue; }
+      const L = layout.find((l) => l.name === name)!;
+      const info = lib.find((c: any) => c?.name === name) || {};
+      const female = info.gender === '女' || info.gender === 'female' || /女/.test(String(info.role || ''));
+      newChars.push({
+        name,
+        position: L.position,
+        rotation: L.rotation,
+        scale: 1,
+        color: female ? '#e8a0bf' : '#4a90d9',
+        template: female ? 'female_standard' : 'male_standard',
+        gender: female ? 'female' : 'male',
+        outfit: female ? '#c0392b' : '#cbd5e4',
+        hairColor: '#2d1810',
+        pose,
+      });
+      posOf[name] = L.position;
+    }
+
+    const pts = castNames.map((n) => posOf[n]).filter(Boolean);
+    const tx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+    const tz = pts.reduce((a, p) => a + p.z, 0) / pts.length;
+    const size = sceneSizeOf(String(sh?.sceneType || ''));
+    const ang = (shotIndex % 2 === 0 ? 0.28 : -0.36) + (shotIndex % 3) * 0.09;
+    const camera = {
+      name: `${String(shotIndex + 1).padStart(2, '0')} ${String(sh?.title || sh?.sceneType || '分镜').slice(0, 18)}`,
+      position: { x: tx + Math.sin(ang) * size.dist, y: size.y, z: tz + Math.cos(ang) * size.dist },
+      target: { x: tx, y: 1.2, z: tz },
+      fov: size.fov,
+      aspect: '9:16',
+      movement: moveOf(String(sh?.cameraMove || '')),
+      movementSpeed: 1,
+      duration: Math.min(10, Math.max(2, Number(sh?.duration) || 4)),
+    };
+
+    appendShotToStage({ newCharacters: newChars, camera });
+
+    // 仅当画布还没有布景时套用检测到的场景（不打翻已有的布景/自定义道具）
+    const tpl = props.length === 0 ? detectSceneTemplate([sh]) : null;
+    if (tpl) {
+      setSelectedSceneTemplate(tpl);
+      applySceneTemplate(tpl as any);
+    }
+    log?.(`已追加第 ${shotIndex + 1} 镜：${newChars.length ? '新增 ' + newChars.map((c) => c.name).join('、') + '，' : ''}生成 1 个机位${tpl ? '，并套用「' + SCENE_TEMPLATES.find((t) => t.value === tpl)?.label + '」场景' : ''}。继续逐镜追加或拖动微调`);
   };
 
   return (
@@ -444,20 +522,40 @@ export function DirectorPanel({
         🎬 白模导演台 · 分镜预演
       </div>
 
-      {/* 一键从分镜生成白模站位 */}
+      {/* 从分镜导入：一键搭骨架（整体替换）+ 逐镜追加 */}
       <div style={{ padding: '10px 12px', background: '#f5f7fb', borderBottom: '1px solid #dde4f0' }}>
         <div style={{ fontSize: '12px', fontWeight: 600, color: '#1f2937', marginBottom: '6px' }}>
-          📥 从分镜一键生成预演
+          📥 从分镜导入预演
         </div>
         <button
           onClick={handleImportStoryboard}
-          style={{ width: '100%', padding: '8px', background: 'linear-gradient(135deg, #0ea5e9, #6D28D9)', border: 'none', borderRadius: '5px', color: '#fff', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+          style={{ width: '100%', padding: '8px', background: 'linear-gradient(135deg, #0ea5e9, #6D28D9)', border: 'none', borderRadius: '5px', color: '#fff', cursor: 'pointer', fontSize: '12px', fontWeight: 600, marginBottom: '6px' }}
         >
-          导入分镜 · 自动摆位 + 机位
+          一键全导入（重置并搭骨架）
         </button>
-        <div style={{ fontSize: '10px', color: '#7c8798', marginTop: '6px', lineHeight: 1.5 }}>
-          读取分镜的出场人物 / 景别 / 运镜，自动摆好白模站位与姿态、逐镜生成机位，并按场景关键词切换氛围。导入后拖动人物、机位或改姿态即可微调。
+        <div style={{ fontSize: '10px', color: '#7c8798', marginBottom: '6px', lineHeight: 1.5 }}>
+          逐镜追加更贴近实际工作流：下面每条分镜点「＋ 追加此镜」，只把该镜人物（复用同名）与机位加进当前预演，<b>不打翻已有布景</b>。
         </div>
+        {shotsList.length === 0 ? (
+          <div style={{ fontSize: '10px', color: '#f5576c' }}>项目里还没有分镜，请先在「03 分镜」拆剧本。</div>
+        ) : (
+          <div style={{ maxHeight: 210, overflowY: 'auto', border: '1px solid #dde4f0', borderRadius: 4, background: '#fff' }}>
+            {shotsList.map((sh: any, i: number) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 6px', borderBottom: i < shotsList.length - 1 ? '1px solid #eef1f6' : 'none' }}>
+                <span style={{ fontSize: 11, color: '#94a3b8', width: 18, textAlign: 'right' }}>{i + 1}</span>
+                <span style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1f2937' }}>
+                  {String(sh?.title || sh?.sceneType || '分镜').slice(0, 12)}
+                  <span style={{ color: '#9aa3b2' }}>· {shotNamesOf(sh).join('/') || '—'}</span>
+                </span>
+                <button
+                  onClick={() => handleAppendShot(i)}
+                  title="把这一镜追加进当前预演"
+                  style={{ background: 'linear-gradient(135deg,#10b981,#0ea5e9)', border: 'none', borderRadius: 4, color: '#fff', fontSize: 10, padding: '3px 6px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >＋ 追加此镜</button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 角色管理 */}

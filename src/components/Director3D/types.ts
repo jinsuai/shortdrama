@@ -45,6 +45,17 @@ export const CHARACTER_TEMPLATES: { value: CharacterTemplateType; label: string;
   { value: 'child', label: '儿童', gender: 'male', desc: '儿童体型' },
 ];
 
+/** 复合布景件的一个体素部件（相对布景件原点） */
+export interface PropPart {
+  shape: 'box' | 'sphere' | 'cylinder' | 'plane';
+  /** 局部尺寸；对应单位几何体的缩放（box=1³、sphere 半径0.5、cylinder 半径0.5高1、plane=2²） */
+  size: Vector3;
+  /** 相对布景件原点的偏移 */
+  offset?: Vector3;
+  rotation?: Vector3;
+  color?: string;
+}
+
 export interface Prop {
   id: string;
   name: string;
@@ -53,6 +64,10 @@ export interface Prop {
   rotation: Vector3;
   scale: Vector3;
   color: string;
+  /** 复合布景件（如沙发=座+靠背+扶手）。parts 存在时覆盖单体渲染，仍不加载任何外部模型 */
+  parts?: PropPart[];
+  /** 标记来自哪个场景模板，便于整体替换/清除 */
+  setPieceId?: string;
 }
 
 export interface CameraShot {

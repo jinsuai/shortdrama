@@ -11,6 +11,7 @@ import {
   SCENE_TEMPLATES,
   CAMERA_DEFAULT_DURATION,
 } from './types';
+import { SCENE_SET_PIECES } from './sceneSetPieces';
 
 const genId = () => Math.random().toString(36).substring(2, 10);
 
@@ -110,6 +111,8 @@ interface DirectorStore {
   replaceCameras: (shots: any[]) => void;
   /** 从分镜一键导入：整体替换人物站位（含姿态）与机位，坏数据不炸画布 */
   applyStoryboardLayout: (layout: { characters: any[]; cameras: any[] }) => void;
+  /** 逐镜追加：只新增该镜出场且尚不存在的人物，并追加一个机位，不打翻已有布景 */
+  appendShotToStage: (payload: { newCharacters: any[]; camera: any }) => void;
 
   // 场景操作
   updateScene: (updates: Partial<SceneConfig>) => void;
@@ -316,71 +319,19 @@ export const useDirectorStore = create<DirectorStore>((set, get) => ({
     const tpl = SCENE_TEMPLATES.find(t => t.value === template);
     if (!tpl) return;
 
-    // 根据场景模板生成对应的道具（3D物体）
-    const sceneProps = {
-      bedroom: [
-        { type: 'box' as const, name: '床', position: { x: 0, y: 0.3, z: 0 }, scale: { x: 2, y: 0.6, z: 3 }, color: '#8b4513' },
-        { type: 'box' as const, name: '床头柜', position: { x: -1.5, y: 0.25, z: -1 }, scale: { x: 0.5, y: 0.5, z: 0.5 }, color: '#654321' },
-        { type: 'box' as const, name: '衣柜', position: { x: 2, y: 1, z: -2 }, scale: { x: 1.5, y: 2, z: 0.6 }, color: '#5d4037' },
-        { type: 'cylinder' as const, name: '台灯', position: { x: -1.5, y: 0.6, z: -1 }, scale: { x: 0.15, y: 0.4, z: 0.15 }, color: '#ffd700' },
-      ],
-      livingroom: [
-        { type: 'box' as const, name: '沙发', position: { x: 0, y: 0.4, z: 0 }, scale: { x: 3, y: 0.8, z: 1 }, color: '#7c8ba0' },
-        { type: 'box' as const, name: '茶几', position: { x: 0, y: 0.2, z: 1.5 }, scale: { x: 1.2, y: 0.4, z: 0.6 }, color: '#8b4513' },
-        { type: 'box' as const, name: '电视柜', position: { x: 0, y: 0.3, z: -2.5 }, scale: { x: 2, y: 0.6, z: 0.4 }, color: '#cbd5e3' },
-        { type: 'box' as const, name: '电视', position: { x: 0, y: 1, z: -2.7 }, scale: { x: 1.5, y: 0.9, z: 0.1 }, color: '#f0f1f4' },
-      ],
-      office: [
-        { type: 'box' as const, name: '办公桌', position: { x: 0, y: 0.4, z: 0 }, scale: { x: 1.6, y: 0.8, z: 0.8 }, color: '#5d4037' },
-        { type: 'box' as const, name: '办公椅', position: { x: 0, y: 0.5, z: 1.2 }, scale: { x: 0.6, y: 1, z: 0.6 }, color: '#cbd5e3' },
-        { type: 'box' as const, name: '文件柜', position: { x: -2, y: 0.9, z: -1 }, scale: { x: 0.8, y: 1.8, z: 0.4 }, color: '#718096' },
-        { type: 'cylinder' as const, name: '电脑显示器', position: { x: 0, y: 1, z: -0.3 }, scale: { x: 0.4, y: 0.6, z: 0.05 }, color: '#f0f1f4' },
-      ],
-      street: [
-        { type: 'box' as const, name: '建筑1', position: { x: -4, y: 3, z: 0 }, scale: { x: 2, y: 6, z: 3 }, color: '#7c8ba0' },
-        { type: 'box' as const, name: '建筑2', position: { x: 4, y: 4, z: -2 }, scale: { x: 2.5, y: 8, z: 3 }, color: '#cbd5e3' },
-        { type: 'cylinder' as const, name: '路灯', position: { x: -2, y: 1.5, z: 2 }, scale: { x: 0.1, y: 3, z: 0.1 }, color: '#7c8ba0' },
-        { type: 'sphere' as const, name: '路灯灯泡', position: { x: -2, y: 3.2, z: 2 }, scale: { x: 0.2, y: 0.2, z: 0.2 }, color: '#ffd700' },
-      ],
-      palace: [
-        { type: 'box' as const, name: '龙椅', position: { x: 0, y: 0.8, z: -2 }, scale: { x: 1.5, y: 1.6, z: 0.8 }, color: '#daa520' },
-        { type: 'cylinder' as const, name: '柱子1', position: { x: -3, y: 2, z: -1 }, scale: { x: 0.3, y: 4, z: 0.3 }, color: '#8b0000' },
-        { type: 'cylinder' as const, name: '柱子2', position: { x: 3, y: 2, z: -1 }, scale: { x: 0.3, y: 4, z: 0.3 }, color: '#8b0000' },
-        { type: 'box' as const, name: '台阶', position: { x: 0, y: 0.15, z: -1 }, scale: { x: 4, y: 0.3, z: 1.5 }, color: '#8b4513' },
-      ],
-      forest: [
-        { type: 'cylinder' as const, name: '树干1', position: { x: -2, y: 1, z: 0 }, scale: { x: 0.3, y: 2, z: 0.3 }, color: '#5d4037' },
-        { type: 'sphere' as const, name: '树冠1', position: { x: -2, y: 2.5, z: 0 }, scale: { x: 1.2, y: 1.2, z: 1.2 }, color: '#228b22' },
-        { type: 'cylinder' as const, name: '树干2', position: { x: 2, y: 1.2, z: -1 }, scale: { x: 0.4, y: 2.4, z: 0.4 }, color: '#5d4037' },
-        { type: 'sphere' as const, name: '树冠2', position: { x: 2, y: 3, z: -1 }, scale: { x: 1.5, y: 1.5, z: 1.5 }, color: '#2e8b57' },
-        { type: 'cylinder' as const, name: '树干3', position: { x: 0, y: 0.8, z: 2 }, scale: { x: 0.25, y: 1.6, z: 0.25 }, color: '#5d4037' },
-        { type: 'sphere' as const, name: '树冠3', position: { x: 0, y: 2, z: 2 }, scale: { x: 1, y: 1, z: 1 }, color: '#3cb371' },
-      ],
-      bar: [
-        { type: 'box' as const, name: '吧台', position: { x: 0, y: 0.6, z: -1 }, scale: { x: 4, y: 1.2, z: 0.6 }, color: '#2d1b2e' },
-        { type: 'cylinder' as const, name: '吧椅1', position: { x: -1, y: 0.5, z: 0.5 }, scale: { x: 0.3, y: 1, z: 0.3 }, color: '#4a1942' },
-        { type: 'cylinder' as const, name: '吧椅2', position: { x: 1, y: 0.5, z: 0.5 }, scale: { x: 0.3, y: 1, z: 0.3 }, color: '#4a1942' },
-        { type: 'sphere' as const, name: '霓虹灯1', position: { x: -2, y: 2, z: -2 }, scale: { x: 0.3, y: 0.3, z: 0.3 }, color: '#ff00ff' },
-        { type: 'sphere' as const, name: '霓虹灯2', position: { x: 2, y: 2, z: -2 }, scale: { x: 0.3, y: 0.3, z: 0.3 }, color: '#00ffff' },
-      ],
-      hospital: [
-        { type: 'box' as const, name: '病床', position: { x: 0, y: 0.4, z: 0 }, scale: { x: 1.2, y: 0.8, z: 2.5 }, color: '#111827' },
-        { type: 'box' as const, name: '床头柜', position: { x: -1, y: 0.3, z: -0.5 }, scale: { x: 0.4, y: 0.6, z: 0.4 }, color: '#4b5563' },
-        { type: 'cylinder' as const, name: '输液架', position: { x: 1, y: 1, z: 0 }, scale: { x: 0.05, y: 2, z: 0.05 }, color: '#5b6678' },
-        { type: 'box' as const, name: '输液瓶', position: { x: 1, y: 2, z: 0 }, scale: { x: 0.15, y: 0.25, z: 0.15 }, color: '#e0f2fe' },
-      ],
-      empty: [],
-    };
-
-    const propsToAdd = sceneProps[template] || [];
-    const newProps = propsToAdd.map((p, i) => ({
+    // 套用命名布景件库（Reveric 式：每个场景一组有名字的复合素模）。
+    // 布景件都放到场景后半区（z<=0），人物站位在原点/前半区，互不遮挡。
+    const pieces = SCENE_SET_PIECES[template] || [];
+    const newProps: Prop[] = pieces.map((p) => ({
       id: genId(),
       name: p.name,
       type: p.type,
       position: p.position,
-      rotation: { x: 0, y: 0, z: 0 },
-      scale: p.scale,
-      color: p.color,
+      rotation: p.rotation || { x: 0, y: 0, z: 0 },
+      scale: p.scale || { x: 1, y: 1, z: 1 },
+      color: p.color || '#cdd5e2',
+      parts: p.parts,
+      setPieceId: template,
     }));
 
     set((s) => ({
@@ -459,6 +410,25 @@ export const useDirectorStore = create<DirectorStore>((set, get) => ({
       previewCameraId: null,
       playing: false,
       playhead: 0,
+      seekNonce: s.seekNonce + 1,
+    }));
+  },
+
+  /** 逐镜追加：只写入尚不存在的人物（按名去重），并追加该镜一个机位；不打翻已有的布景与站位 */
+  appendShotToStage: (payload) => {
+    const newChars = normalizeCharacterDrafts(payload?.newCharacters);
+    const cam = normalizeCameraShots([payload?.camera]).map((c, i) => ({
+      ...c,
+      name: String(payload?.camera?.name || c.name || `镜头${i + 1}`).slice(0, 40),
+    }));
+    set((s) => ({
+      characters: [...s.characters, ...newChars],
+      cameras: [...s.cameras, ...cam],
+      activeCameraId: cam[0]?.id ?? s.activeCameraId,
+      selectedCharacterId: null,
+      selectedPropId: null,
+      previewCameraId: s.previewCameraId,
+      playing: false,
       seekNonce: s.seekNonce + 1,
     }));
   },
