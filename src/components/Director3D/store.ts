@@ -85,6 +85,8 @@ interface DirectorStore {
   selectCharacter: (id: string | null) => void;
   // 场景模板
   applySceneTemplate: (template: SceneTemplateType) => void;
+  /** 仅替换命名布景件（保留用户自定义道具、人物、机位），用于逐镜自动换景 */
+  switchSceneTemplate: (template: SceneTemplateType) => void;
 
   // 道具操作
   addProp: (type: Prop['type']) => void;
@@ -346,6 +348,40 @@ export const useDirectorStore = create<DirectorStore>((set, get) => ({
         directionalLightIntensity: tpl.directionalLight,
       },
       props: newProps,
+    }));
+  },
+
+  switchSceneTemplate: (template) => {
+    const tpl = SCENE_TEMPLATES.find(t => t.value === template);
+    if (!tpl) return;
+
+    const pieces = SCENE_SET_PIECES[template] || [];
+    const newProps: Prop[] = pieces.map((p) => ({
+      id: genId(),
+      name: p.name,
+      type: p.type,
+      position: p.position,
+      rotation: p.rotation || { x: 0, y: 0, z: 0 },
+      scale: p.scale || { x: 1, y: 1, z: 1 },
+      color: p.color || '#cdd5e2',
+      parts: p.parts,
+      setPieceId: template,
+    }));
+
+    // 关键区别：只替换「命名布景件」(有 setPieceId 的)，保留用户手动添加的无 setPieceId 自定义道具；
+    // 人物(characters)与机位(cameras)本就不在 props 里，天然保留。
+    set((s) => ({
+      scene: {
+        ...s.scene,
+        background: tpl.background,
+        groundColor: tpl.groundColor,
+        fogEnabled: tpl.fogEnabled,
+        fogColor: tpl.fogColor,
+        fogDensity: tpl.fogDensity,
+        ambientLightIntensity: tpl.ambientLight,
+        directionalLightIntensity: tpl.directionalLight,
+      },
+      props: [...s.props.filter((p) => !p.setPieceId), ...newProps],
     }));
   },
 

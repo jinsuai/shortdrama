@@ -302,6 +302,7 @@ export function DirectorPanel({
     appendShotToStage,
     updateScene,
     applySceneTemplate,
+    switchSceneTemplate,
     toggleGrid,
     exportScene,
     exportCameraReference,
@@ -489,13 +490,16 @@ export function DirectorPanel({
 
     appendShotToStage({ newCharacters: newChars, camera });
 
-    // 仅当画布还没有布景时套用检测到的场景（不打翻已有的布景/自定义道具）
-    const tpl = props.length === 0 ? detectSceneTemplate([sh]) : null;
-    if (tpl) {
-      setSelectedSceneTemplate(tpl);
-      applySceneTemplate(tpl as any);
+    // 自动搭建 / 切换场景：检测本镜地点关键词，与当前场景不同就自动换景。
+    // 保留人物站位、机位与用户自定义道具，只替换命名布景件——不打翻已有内容。
+    const tpl = detectSceneTemplate([sh]);
+    const currentTpl = props.find((p) => p.setPieceId)?.setPieceId || 'empty';
+    const sceneChanged = !!tpl && tpl !== currentTpl;
+    if (sceneChanged) {
+      setSelectedSceneTemplate(tpl as string);
+      switchSceneTemplate(tpl as any);
     }
-    log?.(`已追加第 ${shotIndex + 1} 镜：${newChars.length ? '新增 ' + newChars.map((c) => c.name).join('、') + '，' : ''}生成 1 个机位${tpl ? '，并套用「' + SCENE_TEMPLATES.find((t) => t.value === tpl)?.label + '」场景' : ''}。继续逐镜追加或拖动微调`);
+    log?.(`已追加第 ${shotIndex + 1} 镜：${newChars.length ? '新增 ' + newChars.map((c) => c.name).join('、') + '，' : ''}生成 1 个机位${sceneChanged ? '，并自动套用「' + SCENE_TEMPLATES.find((t) => t.value === tpl)?.label + '」场景' : ''}。继续逐镜追加或拖动微调`);
   };
 
   return (
@@ -1030,7 +1034,7 @@ export function DirectorPanel({
             value={selectedSceneTemplate}
             onChange={(e) => {
               setSelectedSceneTemplate(e.target.value);
-              applySceneTemplate(e.target.value as any);
+              switchSceneTemplate(e.target.value as any);
             }}
             style={{ width: '100%', background: '#f5f7fb', border: '1px solid #dde4f0', borderRadius: '4px', padding: '5px', color: '#1f2937', fontSize: '11px' }}
           >
