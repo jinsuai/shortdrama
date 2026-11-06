@@ -3,6 +3,7 @@ import {
   Character,
   Prop,
   CameraShot,
+  CharacterMotion,
   SceneConfig,
   DEFAULT_SCENE,
   Vector3,
@@ -21,6 +22,31 @@ const vecOf = (v: any, d: Vector3): Vector3 =>
     ? { x: v.x, y: v.y, z: v.z }
     : d;
 
+/** 动作草稿清洗：只接受认识的值，坏数据一律回退到安全默认，绝不让画布炸掉 */
+function normalizeMotions(raw: any): CharacterMotion[] | undefined {
+  if (!Array.isArray(raw) || !raw.length) return undefined;
+  const easings = ['linear', 'easeOut', 'easeInOut'];
+  const out: CharacterMotion[] = [];
+  for (const m of raw.slice(0, 12)) {
+    if (!m || typeof m !== 'object') continue;
+    const name = String(m.name || '').trim().slice(0, 40);
+    const to = vecOf(m.to, { x: 0, y: 0, z: 0 });
+    if (!name) continue;
+    out.push({
+      name,
+      from: m.from ? vecOf(m.from, to) : undefined,
+      to,
+      easing: (easings.includes(m.easing) ? m.easing : 'easeInOut') as CharacterMotion['easing'],
+      start: Math.min(1, Math.max(0, numOf(m.start, 0))),
+      end: Math.min(1, Math.max(0, numOf(m.end, 1))),
+      cadence: Math.min(6, Math.max(0, numOf(m.cadence, 1.8))),
+      bob: Math.min(0.2, Math.max(0, numOf(m.bob, 0.035))),
+      face: typeof m.face === 'number' ? m.face : (m.face === 'keep' ? 'keep' : 'path'),
+    });
+  }
+  return out.length ? out : undefined;
+}
+
 /** 机位草稿清洗：只接受认识的值，坏数据一律回退到安全默认，绝不让画布炸掉 */
 function normalizeCameraShots(shots: any[]): CameraShot[] {
   const allowed = ['static', 'push', 'pull', 'pan', 'tilt', 'track', 'orbit'];
@@ -34,6 +60,7 @@ function normalizeCameraShots(shots: any[]): CameraShot[] {
     movement: (allowed.includes(raw?.movement) ? raw.movement : 'static') as CameraShot['movement'],
     movementSpeed: Math.min(4, Math.max(0.2, numOf(raw?.movementSpeed, 1))),
     duration: Math.min(30, Math.max(0.5, numOf(raw?.duration, CAMERA_DEFAULT_DURATION))),
+    motions: normalizeMotions(raw?.motions),
   }));
 }
 

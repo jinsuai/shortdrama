@@ -11,6 +11,7 @@ import {
 import * as THREE from 'three';
 import { useDirectorStore } from './store';
 import { Character, Prop, CameraShot, CAMERA_DEFAULT_DURATION } from './types';
+import { previewClock, easeMotion } from './previewClock';
 
 // ─────────────────────────────────────────────────────────────
 // 白模约定（用户 2026-11-04 明确）：不加载任何外部 3D 模型（GLB/GLTF），
@@ -457,11 +458,54 @@ function CharacterMesh({ character }: { character: Character }) {
   const groupRef = useRef<THREE.Group>(null);
 
   useFrame(() => {
-    if (groupRef.current) {
-      groupRef.current.position.set(character.position.x, character.position.y, character.position.z);
-      groupRef.current.rotation.set(character.rotation.x, character.rotation.y, character.rotation.z);
-      groupRef.current.scale.setScalar(character.scale);
+    const g = groupRef.current;
+    if (!g) return;
+    const c = character;
+    // 动作绑在「当前镜头」上：逐镜追加会复用同名角色，按镜隔离才不会只动第一镜。
+    const st = useDirectorStore.getState();
+    const cam = previewClock.shotIndex >= 0 ? st.cameras[previewClock.shotIndex] : null;
+    const motion = cam?.motions?.find((m) => m.name === c.name);
+
+    if (!motion) {
+      // 编辑态 / 无动作镜头：白模回到静态站位（所见即所编辑）
+      g.position.set(c.position.x, c.position.y, c.position.z);
+      g.rotation.set(c.rotation.x, c.rotation.y, c.rotation.z);
+      g.scale.setScalar(c.scale);
+      return;
     }
+
+    const from = motion.from || c.position;
+    const to = motion.to;
+    const s = Math.min(1, Math.max(0, motion.start ?? 0));
+    const e = Math.min(1, Math.max(0, motion.end ?? 1));
+    const span = Math.max(1e-3, e - s);
+    // easeOut = 临近门口脚步放缓；easeInOut = 起步稳、到位缓
+    const raw = easeMotion((previewClock.progress - s) / span, motion.easing);
+    const dx = to.x - from.x;
+    const dz = to.z - from.z;
+    const moving = raw > 0.001 && raw < 0.999;
+    const cadence = motion.cadence ?? 1.8;
+    const bob = motion.bob ?? 0.035;
+
+    // 步伐起伏：只在行进中，用镜内时间驱动，保证播放与拖进度条都平滑（60fps，不依赖 8fps 的 playhead）
+    let y = from.y + (to.y - from.y) * raw;
+    if (moving && cadence > 0 && bob > 0) {
+      y += Math.abs(Math.sin(previewClock.localT * cadence * Math.PI * 2)) * bob;
+    }
+    g.position.set(from.x + dx * raw, y, from.z + dz * raw);
+
+    // 朝向运动方向（HumanoidBody 默认朝 +z，故 yaw = atan2(dx, dz)）
+    let yaw = c.rotation.y;
+    if (motion.face === 'path' && Math.abs(dx) + Math.abs(dz) > 1e-4) {
+      yaw = Math.atan2(dx, dz);
+    } else if (typeof motion.face === 'number') {
+      yaw = motion.face;
+    }
+    const sway = moving && cadence > 0
+      ? Math.sin(previewClock.localT * cadence * Math.PI * 2) * 0.025
+      : 0;
+    g.rotation.set(c.rotation.x, yaw, c.rotation.z + sway);
+    g.scale.setScalar(c.scale);
   });
 
   return (
@@ -715,8 +759,23 @@ function CameraRig() {
       st.reportProgress(elapsed.current, hit?.cam.id ?? null);
     }
 
-    if (!hit) return;
-    applyCamera(camera as THREE.PerspectiveCamera, hit.cam, hit.localT, hit.duration);
+    // 把当前时间轴状态发布给白模动画（可变对象，不触发 React 重渲染 → 60fps 平滑）
+    previewClock.t = elapsed.current;
+    previewClock.playing = st.playing;
+    const h = hit;
+    if (h) {
+      previewClock.localT = h.localT;
+      previewClock.duration = h.duration;
+      previewClock.progress = h.duration > 0 ? Math.min(1, Math.max(0, h.localT / h.duration)) : 0;
+      previewClock.shotIndex = st.cameras.findIndex((c) => c.id === h.cam.id);
+      applyCamera(camera as THREE.PerspectiveCamera, h.cam, h.localT, h.duration);
+    } else {
+      // 自由观察（未播放、未选机位）：动作时钟归零，白模回到静态站位
+      previewClock.localT = 0;
+      previewClock.duration = 0;
+      previewClock.progress = 0;
+      previewClock.shotIndex = -1;
+    }
   });
 
   return null;

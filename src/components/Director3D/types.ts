@@ -70,6 +70,29 @@ export interface Prop {
   setPieceId?: string;
 }
 
+/** 某一镜里某个白模人物的动作（预演时按时间轴驱动，不调外部模型）。
+ *  绑在 CameraShot 上而不是 Character 上：逐镜追加会复用同名角色，
+ *  动作必须按「镜」隔离，否则第二镜复用同一人时只会动第一镜。 */
+export interface CharacterMotion {
+  /** 对应 Character.name */
+  name: string;
+  /** 起点；不填则用该人物在画布上的静态站位 */
+  from?: Vector3;
+  /** 终点（绝对坐标） */
+  to: Vector3;
+  /** 时间曲线：linear 匀速 / easeOut 起步快末端放缓 / easeInOut 两端缓 */
+  easing?: 'linear' | 'easeOut' | 'easeInOut';
+  /** 动作在本镜内的起止比例 0~1（如 起步 0.05、临近门口停下 0.9） */
+  start?: number;
+  end?: number;
+  /** 步伐频率（Hz）。0 表示不做步伐起伏（如只是转身/滑移） */
+  cadence?: number;
+  /** 步伐上下起伏幅度（米） */
+  bob?: number;
+  /** 朝向：'path' 朝向运动方向 / 'keep' 保持静态朝向 / 给定弧度 */
+  face?: 'path' | 'keep' | number;
+}
+
 export interface CameraShot {
   id: string;
   name: string;
@@ -81,6 +104,8 @@ export interface CameraShot {
   movementSpeed: number;
   /** 时间轴上该镜头的时长（秒）。镜头按 cameras 数组顺序依次切镜。 */
   duration: number;
+  /** 本镜人物动作（逐镜追加/一键导入时从分镜文本推断）。预演播放与导出视频都吃这个。 */
+  motions?: CharacterMotion[];
   thumbnail?: string;
 }
 

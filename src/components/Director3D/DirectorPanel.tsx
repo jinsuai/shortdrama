@@ -15,7 +15,7 @@ import {
   ChevronRight,
 } from '../../lib/icons';
 import { useDirectorStore } from './store';
-import { ASPECT_RATIOS, CAMERA_MOVEMENTS, CAMERA_MOVEMENT_HINTS, CAMERA_DEFAULT_DURATION, CHARACTER_TEMPLATES, CHARACTER_POSES, SCENE_TEMPLATES, type CharacterPose } from './types';
+import { ASPECT_RATIOS, CAMERA_MOVEMENTS, CAMERA_MOVEMENT_HINTS, CAMERA_DEFAULT_DURATION, CHARACTER_TEMPLATES, CHARACTER_POSES, SCENE_TEMPLATES, type CharacterPose, type CharacterMotion } from './types';
 
 function PanelHeader({
   icon: Icon,
@@ -210,6 +210,54 @@ const inferPose = (text: string): CharacterPose => {
   if (/蹲|跪|俯身|弯腰|捡拾|伏低/.test(text)) return 'squat';
   if (/走|跑|奔|冲|迈步|入场|离开|追|赶/.test(text)) return 'walk';
   return 'stand';
+};
+
+/**
+ * 从分镜文本推断「本镜人物动作」——预演视频里白模真的走起来就靠它。
+ * 纯前端确定性推导，不调模型 API。动作绑在机位上（见 CameraShot.motions），
+ * 所以逐镜追加复用同名角色时，每一镜各自动、互不串。
+ */
+const inferShotMotions = (
+  sh: any,
+  names: string[],
+  posOf: Record<string, { x: number; y: number; z: number }>,
+): CharacterMotion[] => {
+  const text = [
+    sh?.title, sh?.sceneDesc, sh?.description, sh?.action, sh?.promptCn,
+    sh?.imagePrompt, sh?.firstFramePrompt, sh?.videoPrompt, sh?.cameraMove,
+  ].filter(Boolean).join(' ');
+  if (!text || !names.length) return [];
+
+  const moving = /走向|走来|走去|走过|拾级|起步|走近|前行|迈步|入场|步入|穿过|走下|走上|离开|追|赶|跑|奔|冲|缓步|稳步|脚步|跟随|靠近|逼近/.test(text);
+  if (!moving) return [];
+
+  // 目标方向：默认朝场景纵深 -z（命名布景件全在 z<=0 后半区）；明确"朝镜头"则 +z
+  const towardCamera = /朝镜头|向镜头|走向镜头|迎面|面向镜头/.test(text);
+  const towardBack = /拱门|门口|台阶|拾级|深处|尽头|门廊|走入|走进|步入|走廊/.test(text);
+  const dist = /跑|奔|冲|追|赶/.test(text) ? 3.0 : towardBack ? 2.4 : 1.6;
+  const dz = towardCamera ? dist : -dist;
+
+  const slowDown = /放缓|渐缓|临近|放慢|驻足|停下|停步|脚步渐|临近门口/.test(text);
+  const steady = /稳步|匀速|一步一步/.test(text);
+  const easing: CharacterMotion['easing'] = slowDown ? 'easeOut' : steady ? 'linear' : 'easeInOut';
+  const running = /跑|奔|冲|追|赶/.test(text);
+
+  return names.map((name, i) => {
+    const p = posOf[name] || { x: 0, y: 0, z: 0 };
+    // 多人时横向错开，避免叠在一条直线上
+    const spread = names.length > 1 ? (i - (names.length - 1) / 2) * 0.5 : 0;
+    return {
+      name,
+      from: { x: p.x, y: p.y, z: p.z },
+      to: { x: p.x + spread, y: p.y, z: p.z + dz },
+      easing,
+      start: 0.04,
+      end: slowDown ? 0.92 : 0.96,
+      cadence: running ? 2.8 : 1.8,
+      bob: 0.035,
+      face: 'path',
+    };
+  });
 };
 
 const sceneSizeOf = (t: string) =>
@@ -420,6 +468,10 @@ export function DirectorPanel({
       const tz = pts.reduce((a, c) => a + c.position.z, 0) / pts.length;
       // 机位角度逐镜交错，避免所有机位叠在同一个位置
       const ang = (i % 2 === 0 ? 0.28 : -0.36) + (i % 3) * 0.09;
+      // 本镜人物动作：预演播放/导出视频时白模按这段轨迹真的走起来
+      const posOf: Record<string, { x: number; y: number; z: number }> = {};
+      for (const c of inShot) if (c?.name) posOf[c.name] = c.position;
+      const motions = inferShotMotions(sh, Object.keys(posOf), posOf);
       return {
         name: `${String(i + 1).padStart(2, '0')} ${String(sh?.title || sh?.sceneType || '分镜').slice(0, 18)}`,
         position: { x: tx + Math.sin(ang) * size.dist, y: size.y, z: tz + Math.cos(ang) * size.dist },
@@ -429,10 +481,12 @@ export function DirectorPanel({
         movement: moveOf(String(sh?.cameraMove || '')),
         movementSpeed: 1,
         duration: Math.min(10, Math.max(2, Number(sh?.duration) || 4)),
+        motions,
       };
     });
 
     applyStoryboardLayout({ characters: layoutChars, cameras: cameraDrafts });
+    const motionShots = cameraDrafts.filter((c: any) => c?.motions?.length).length;
 
     // 场景氛围：从分镜文本里找地点关键词；整本都识别不到地点时用中性「通用」兜底，避免空舞台
     const detected = detectSceneTemplate(shots);
@@ -440,7 +494,7 @@ export function DirectorPanel({
     const usedFallback = !detected;
     setSelectedSceneTemplate(tpl);
     applySceneTemplate(tpl as any);
-    log?.(`已导入 ${shots.length} 个分镜：摆好 ${layoutChars.length} 个白模人物（含姿态），生成 ${cameraDrafts.length} 个机位，并套用「${usedFallback ? '通用（未识别到地点）' : SCENE_TEMPLATES.find((t) => t.value === tpl)?.label}」场景。接下来可直接在画布拖动人物/机位微调`);
+    log?.(`已导入 ${shots.length} 个分镜：摆好 ${layoutChars.length} 个白模人物（含姿态），生成 ${cameraDrafts.length} 个机位（${motionShots} 镜含白模动作），并套用「${usedFallback ? '通用（未识别到地点）' : SCENE_TEMPLATES.find((t) => t.value === tpl)?.label}」场景。点播放或「导出预演视频」可看到白模真的走位`);
   };
 
   /**
@@ -495,6 +549,7 @@ export function DirectorPanel({
       movement: moveOf(String(sh?.cameraMove || '')),
       movementSpeed: 1,
       duration: Math.min(10, Math.max(2, Number(sh?.duration) || 4)),
+      motions: inferShotMotions(sh, castNames, posOf),
     };
 
     appendShotToStage({ newCharacters: newChars, camera });
@@ -514,7 +569,8 @@ export function DirectorPanel({
     const sceneNote = sceneChanged
       ? '，并' + (usedFallback ? '（未识别到地点）套用中性「通用」布景' : '自动套用「' + SCENE_TEMPLATES.find((t) => t.value === tpl)?.label + '」场景')
       : '';
-    log?.(`已追加第 ${shotIndex + 1} 镜：${newChars.length ? '新增 ' + newChars.map((c) => c.name).join('、') + '，' : ''}生成 1 个机位${sceneNote}。继续逐镜追加或拖动微调`);
+    const motionNote = camera.motions?.length ? `，白模按分镜动作走位（${camera.motions.length} 人）` : '';
+    log?.(`已追加第 ${shotIndex + 1} 镜：${newChars.length ? '新增 ' + newChars.map((c) => c.name).join('、') + '，' : ''}生成 1 个机位${sceneNote}${motionNote}。点播放或「导出预演视频」可看到白模真的动`);
   };
 
   return (
