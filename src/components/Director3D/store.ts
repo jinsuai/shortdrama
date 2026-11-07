@@ -13,6 +13,7 @@ import {
   CAMERA_DEFAULT_DURATION,
 } from './types';
 import { SCENE_SET_PIECES } from './sceneSetPieces';
+import type { TransitionMode } from './transitions';
 
 const genId = () => Math.random().toString(36).substring(2, 10);
 
@@ -104,6 +105,8 @@ interface DirectorStore {
   previewCameraId: string | null;
   /** seek 时递增，通知画布把内部时钟同步到 playhead */
   seekNonce: number;
+  /** 镜头之间的转场方式；dissolve 为默认（消除硬切） */
+  transitionMode: TransitionMode;
 
   // 角色操作
   addCharacter: (name?: string, template?: CharacterTemplateType) => void;
@@ -134,6 +137,8 @@ interface DirectorStore {
   stop: () => void;
   seek: (seconds: number) => void;
   setLoop: (loop: boolean) => void;
+  /** 切换镜头之间的转场方式 */
+  setTransitionMode: (mode: TransitionMode) => void;
   /** 画布回写进度（低频） */
   reportProgress: (seconds: number, cameraId: string | null) => void;
   /** 一键按剧本/分镜生成机位（AI 布机位写回用）；元素为宽松的镜头草稿 */
@@ -215,6 +220,7 @@ export const useDirectorStore = create<DirectorStore>((set, get) => ({
   playhead: 0,
   previewCameraId: null,
   seekNonce: 0,
+  transitionMode: 'dissolve',
 
   addCharacter: (name, template = 'male_standard') => {
     const id = genId();
@@ -444,6 +450,8 @@ export const useDirectorStore = create<DirectorStore>((set, get) => ({
   seek: (seconds) =>
     set((s) => ({ playhead: Math.max(0, seconds), seekNonce: s.seekNonce + 1 })),
   setLoop: (loop) => set({ loop }),
+  setTransitionMode: (mode) =>
+    set({ transitionMode: mode === 'move' || mode === 'cut' ? mode : 'dissolve' }),
   reportProgress: (seconds, cameraId) =>
     set({ playhead: seconds, previewCameraId: cameraId }),
 
@@ -497,9 +505,9 @@ export const useDirectorStore = create<DirectorStore>((set, get) => ({
   },
 
   exportScene: () => {
-    const { characters, props, cameras, scene, loop, showGrid, showGizmos } = get();
+    const { characters, props, cameras, scene, loop, showGrid, showGizmos, transitionMode } = get();
     return {
-      version: '1.1',
+      version: '1.2',
       exportedAt: new Date().toISOString(),
       characters,
       props,
@@ -508,6 +516,7 @@ export const useDirectorStore = create<DirectorStore>((set, get) => ({
       loop,
       showGrid,
       showGizmos,
+      transitionMode,
     };
   },
 
@@ -532,6 +541,9 @@ export const useDirectorStore = create<DirectorStore>((set, get) => ({
       showGrid: typeof data.showGrid === 'boolean' ? data.showGrid : s.showGrid,
       showGizmos: typeof data.showGizmos === 'boolean' ? data.showGizmos : s.showGizmos,
       loop: typeof data.loop === 'boolean' ? data.loop : s.loop,
+      transitionMode: data.transitionMode === 'move' || data.transitionMode === 'cut'
+        ? data.transitionMode
+        : 'dissolve',
       playing: false,
       playhead: 0,
       previewCameraId: null,

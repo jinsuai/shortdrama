@@ -16,6 +16,20 @@ export const previewClock = {
   playing: false,
 };
 
+/** 本帧参与渲染的镜头槽（CameraRig 写入，CharacterMesh / TransitionFade 读取）。
+ *  单镜时 1 个；转场窗口内 2 个并按「出镜 → 入镜」排序。用可变数组避免每帧建对象。 */
+export const previewFrame: {
+  slots: { index: number; localT: number; duration: number; progress: number }[];
+  blend: number;
+  transitioning: boolean;
+  fade: number;
+} = {
+  slots: [],
+  blend: 0,
+  transitioning: false,
+  fade: 0,
+};
+
 export const resetPreviewClock = () => {
   previewClock.t = 0;
   previewClock.localT = 0;
@@ -23,6 +37,10 @@ export const resetPreviewClock = () => {
   previewClock.progress = 0;
   previewClock.shotIndex = -1;
   previewClock.playing = false;
+  previewFrame.slots.length = 0;
+  previewFrame.blend = 0;
+  previewFrame.transitioning = false;
+  previewFrame.fade = 0;
 };
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));

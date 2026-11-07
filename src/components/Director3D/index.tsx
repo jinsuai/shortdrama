@@ -113,6 +113,7 @@ export function Director3D({
   const stop = useDirectorStore((s) => s.stop);
   const seek = useDirectorStore((s) => s.seek);
   const play = useDirectorStore((s) => s.play);
+  const setLoop = useDirectorStore((s) => s.setLoop);
 
   // 进入导演台时回灌项目里存过的布景/机位/构图（只在切换项目时灌一次）
   useEffect(() => {
@@ -269,12 +270,17 @@ export function Director3D({
         setTimeout(() => URL.revokeObjectURL(url), 5000);
         log?.('预演视频已导出（webm）');
       };
+      // 录制期间临时关循环：否则时间轴到末尾会绕回第 1 镜，
+      // 视频尾巴平白多出一次硬切（与「镜头之间要平滑」相冲突）。
+      const prevLoop = useDirectorStore.getState().loop;
+      setLoop(false);
       rec.start();
       seek(0);
       play();
       window.setTimeout(() => {
         try { rec.stop(); } catch (_) { /* 已停止 */ }
         pause();
+        setLoop(prevLoop);
         log?.(`预演录制完成（${total.toFixed(1)}s）`);
       }, (total + 0.4) * 1000);
       log?.(`开始录制时间轴预演（${total.toFixed(1)}s）…`);

@@ -16,6 +16,7 @@ import {
 } from '../../lib/icons';
 import { useDirectorStore } from './store';
 import { ASPECT_RATIOS, CAMERA_MOVEMENTS, CAMERA_MOVEMENT_HINTS, CAMERA_DEFAULT_DURATION, CHARACTER_TEMPLATES, CHARACTER_POSES, SCENE_TEMPLATES, type CharacterPose, type CharacterMotion } from './types';
+import { TRANSITION_MODES, TRANSITION_HALF, type TransitionMode } from './transitions';
 
 function PanelHeader({
   icon: Icon,
@@ -130,6 +131,8 @@ function TimelineBar() {
   const seek = useDirectorStore((s) => s.seek);
   const setLoop = useDirectorStore((s) => s.setLoop);
   const setActiveCamera = useDirectorStore((s) => s.setActiveCamera);
+  const transitionMode = useDirectorStore((s) => s.transitionMode);
+  const setTransitionMode = useDirectorStore((s) => s.setTransitionMode);
 
   const dur = (c: any) => (Number.isFinite(c?.duration) && c.duration > 0 ? c.duration : CAMERA_DEFAULT_DURATION);
   const total = cameras.reduce((a, c) => a + dur(c), 0);
@@ -157,6 +160,28 @@ function TimelineBar() {
         <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: '#4b5563', cursor: 'pointer' }}>
           <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} /> 循环
         </label>
+      </div>
+      {/* 镜头之间：默认溶解，消除切镜点的硬跳 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, fontSize: 10, color: '#4b5563' }}>
+        <span style={{ flex: '0 0 auto' }}>镜头之间</span>
+        <select
+          value={transitionMode}
+          onChange={(e) => setTransitionMode(e.target.value as TransitionMode)}
+          title={TRANSITION_MODES.find((m) => m.value === transitionMode)?.hint}
+          style={{
+            flex: 1, minWidth: 0, fontSize: 10, padding: '3px 4px', borderRadius: 4,
+            border: '1px solid #cfd8e8', background: '#fff', color: '#1f2937', cursor: 'pointer',
+          }}
+        >
+          {TRANSITION_MODES.map((m) => (
+            <option key={m.value} value={m.value}>{m.label}</option>
+          ))}
+        </select>
+      </div>
+      <div style={{ fontSize: 10, color: '#7c8798', marginBottom: 6, lineHeight: 1.4 }}>
+        {transitionMode === 'cut'
+          ? '硬切：切镜点瞬间换机位（旧行为）'
+          : `切镜点前后各 ${TRANSITION_HALF.toFixed(2)}s 融合机位与白模走位，窗口两端与正常播放无缝衔接`}
       </div>
       {/* 分段条：每段一个镜头，点击跳到该镜头起点 */}
       <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', background: '#dbe3f2', marginBottom: 6 }}>

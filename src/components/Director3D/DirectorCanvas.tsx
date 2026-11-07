@@ -10,8 +10,18 @@ import {
 } from '@react-three/drei';
 import * as THREE from 'three';
 import { useDirectorStore } from './store';
-import { Character, Prop, CameraShot, CAMERA_DEFAULT_DURATION } from './types';
-import { previewClock, easeMotion } from './previewClock';
+import { Character, Prop, CameraShot } from './types';
+import { previewClock, previewFrame } from './previewClock';
+import {
+  durOfShot,
+  totalDurationOf,
+  frameAt,
+  fadeOf,
+  effectiveBlend,
+  type FrameState,
+} from './transitions';
+import { cameraPose, lerpPose, applyPose } from './cameraPose';
+import { characterPoseAt, lerpCharPose } from './characterPose';
 
 // ─────────────────────────────────────────────────────────────
 // 白模约定（用户 2026-11-04 明确）：不加载任何外部 3D 模型（GLB/GLTF），
@@ -38,25 +48,9 @@ const Mat = (color = CLAY, roughness = 0.86) => (
   <meshStandardMaterial color={color} roughness={roughness} metalness={0} />
 );
 
-const durOf = (c: CameraShot) =>
-  Number.isFinite(c.duration) && c.duration > 0 ? c.duration : CAMERA_DEFAULT_DURATION;
-const totalDuration = (list: CameraShot[]) => list.reduce((a, c) => a + durOf(c), 0);
-
-type ShotHit = { cam: CameraShot; localT: number; start: number; duration: number } | null;
-
-/** 时间轴上 t 秒落在哪个镜头、镜头内已过多少秒 */
-function shotAt(list: CameraShot[], t: number): ShotHit {
-  let acc = 0;
-  for (const c of list) {
-    const d = durOf(c);
-    if (t < acc + d) return { cam: c, localT: t - acc, start: acc, duration: d };
-    acc += d;
-  }
-  const last = list[list.length - 1];
-  return last
-    ? { cam: last, localT: 0, start: Math.max(0, acc - durOf(last)), duration: durOf(last) }
-    : null;
-}
+// 镜头时长与转场窗口统一由 transitions.ts 提供（纯函数，离线可测）
+const durOf = durOfShot;
+const totalDuration = totalDurationOf;
 
 function shotStartOf(list: CameraShot[], id: string | null): number {
   let acc = 0;
@@ -65,69 +59,6 @@ function shotStartOf(list: CameraShot[], id: string | null): number {
     acc += durOf(c);
   }
   return 0;
-}
-
-/**
- * 把主相机真正放到机位上，并按运镜方式计算轨迹偏移。
- * 以前「机位」只是场景里一个黄色锥体标记，相机永远停在 [8,6,8] 自由观察位，
- * 导致导出的所谓构图参考其实是用户随手转的视角。
- */
-function applyCamera(
-  camera: THREE.PerspectiveCamera,
-  cam: CameraShot,
-  localT: number,
-  duration: number,
-) {
-  const P = new THREE.Vector3(cam.position.x, cam.position.y, cam.position.z);
-  const T = new THREE.Vector3(cam.target.x, cam.target.y, cam.target.z);
-  const dir = new THREE.Vector3().subVectors(T, P);
-  const dist = dir.length() || 1;
-  dir.normalize();
-  const up = new THREE.Vector3(0, 1, 0);
-  const right = new THREE.Vector3().crossVectors(dir, up).normalize();
-  if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
-
-  const speed = cam.movementSpeed || 1;
-  const prog = duration > 0 ? Math.min(1, Math.max(0, localT / duration)) : 0;
-  // 位移幅度封顶在视线距离的一半，避免推镜穿过主体
-  const amp = Math.min(dist * 0.5, prog * speed * dist * 0.55);
-  const pos = P.clone();
-  const look = T.clone();
-
-  switch (cam.movement) {
-    case 'push':
-      pos.addScaledVector(dir, amp);
-      break;
-    case 'pull':
-      pos.addScaledVector(dir, -amp);
-      break;
-    case 'pan':
-      pos.addScaledVector(right, amp);
-      break;
-    case 'tilt':
-      pos.addScaledVector(up, Math.sin(prog * Math.PI) * dist * 0.16);
-      break;
-    case 'track':
-      pos.addScaledVector(right, amp);
-      look.addScaledVector(right, amp);
-      break;
-    case 'orbit': {
-      const angle = prog * speed * Math.PI * 0.85;
-      const off = P.clone().sub(T).applyAxisAngle(up, angle);
-      pos.copy(T).add(off);
-      break;
-    }
-    default:
-      break; // static
-  }
-
-  camera.position.copy(pos);
-  camera.up.set(0, 1, 0);
-  camera.lookAt(look);
-  if (camera.fov !== cam.fov) {
-    camera.fov = cam.fov;
-    camera.updateProjectionMatrix();
-  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -461,51 +392,28 @@ function CharacterMesh({ character }: { character: Character }) {
     const g = groupRef.current;
     if (!g) return;
     const c = character;
-    // 动作绑在「当前镜头」上：逐镜追加会复用同名角色，按镜隔离才不会只动第一镜。
     const st = useDirectorStore.getState();
-    const cam = previewClock.shotIndex >= 0 ? st.cameras[previewClock.shotIndex] : null;
-    const motion = cam?.motions?.find((m) => m.name === c.name);
+    const slots = previewFrame.slots;
 
-    if (!motion) {
-      // 编辑态 / 无动作镜头：白模回到静态站位（所见即所编辑）
+    if (!slots.length) {
+      // 编辑态 / 自由观察：白模回到静态站位（所见即所编辑）
       g.position.set(c.position.x, c.position.y, c.position.z);
       g.rotation.set(c.rotation.x, c.rotation.y, c.rotation.z);
       g.scale.setScalar(c.scale);
       return;
     }
 
-    const from = motion.from || c.position;
-    const to = motion.to;
-    const s = Math.min(1, Math.max(0, motion.start ?? 0));
-    const e = Math.min(1, Math.max(0, motion.end ?? 1));
-    const span = Math.max(1e-3, e - s);
-    // easeOut = 临近门口脚步放缓；easeInOut = 起步稳、到位缓
-    const raw = easeMotion((previewClock.progress - s) / span, motion.easing);
-    const dx = to.x - from.x;
-    const dz = to.z - from.z;
-    const moving = raw > 0.001 && raw < 0.999;
-    const cadence = motion.cadence ?? 1.8;
-    const bob = motion.bob ?? 0.035;
-
-    // 步伐起伏：只在行进中，用镜内时间驱动，保证播放与拖进度条都平滑（60fps，不依赖 8fps 的 playhead）
-    let y = from.y + (to.y - from.y) * raw;
-    if (moving && cadence > 0 && bob > 0) {
-      y += Math.abs(Math.sin(previewClock.localT * cadence * Math.PI * 2)) * bob;
-    }
-    g.position.set(from.x + dx * raw, y, from.z + dz * raw);
-
-    // 朝向运动方向（HumanoidBody 默认朝 +z，故 yaw = atan2(dx, dz)）
-    let yaw = c.rotation.y;
-    if (motion.face === 'path' && Math.abs(dx) + Math.abs(dz) > 1e-4) {
-      yaw = Math.atan2(dx, dz);
-    } else if (typeof motion.face === 'number') {
-      yaw = motion.face;
-    }
-    const sway = moving && cadence > 0
-      ? Math.sin(previewClock.localT * cadence * Math.PI * 2) * 0.025
-      : 0;
-    g.rotation.set(c.rotation.x, yaw, c.rotation.z + sway);
-    g.scale.setScalar(c.scale);
+    const a = characterPoseAt(c, st.cameras[slots[0].index], slots[0]);
+    const pose = slots.length > 1 && previewFrame.blend > 0
+      ? lerpCharPose(
+          a,
+          characterPoseAt(c, st.cameras[slots[1].index], slots[1]),
+          previewFrame.blend,
+        )
+      : a;
+    g.position.set(pose.x, pose.y, pose.z);
+    g.rotation.set(c.rotation.x, pose.yaw, pose.roll);
+    g.scale.setScalar(pose.scale);
   });
 
   return (
@@ -686,6 +594,57 @@ function CameraPreview({ camera }: { camera: CameraShot }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 转场遮挡层
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 贴在相机正前方的全屏 quad，仅在「溶解」转场窗口内升起，颜色取场景背景色。
+ * 必须用 WebGL 内的 quad 而不是 DOM 遮罩：MediaRecorder 录的是
+ * canvas.captureStream()，DOM 覆盖层（工具栏/三分线/名字牌）根本进不了视频。
+ */
+function TransitionFade() {
+  const camera = useThree((s) => s.camera);
+  const size = useThree((s) => s.size);
+  const background = useDirectorStore((s) => s.scene.background);
+  const meshRef = useRef<THREE.Mesh>(null);
+  const matRef = useRef<THREE.MeshBasicMaterial>(null);
+
+  useFrame(() => {
+    const mesh = meshRef.current;
+    const mat = matRef.current;
+    if (!mesh || !mat) return;
+    const fade = previewFrame.fade;
+    mesh.visible = fade > 0.002;
+    mat.opacity = fade;
+    if (!mesh.visible) return;
+    const pc = camera as THREE.PerspectiveCamera;
+    const d = 0.5;
+    const h = 2 * d * Math.tan((pc.fov * Math.PI) / 360); // tan(fov/2)
+    const w = h * (size.width / Math.max(1, size.height));
+    mesh.position.copy(camera.position);
+    mesh.quaternion.copy(camera.quaternion);
+    mesh.translateZ(-d);
+    mesh.scale.set(w * 1.06, h * 1.06, 1);
+  });
+
+  return (
+    <mesh ref={meshRef} renderOrder={9999} frustumCulled={false} visible={false}>
+      <planeGeometry args={[1, 1]} />
+      <meshBasicMaterial
+        ref={matRef}
+        color={background}
+        transparent
+        opacity={0}
+        depthTest={false}
+        depthWrite={false}
+        side={THREE.DoubleSide}
+        toneMapped={false}
+      />
+    </mesh>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // 相机驱动 + 时间轴时钟
 // ─────────────────────────────────────────────────────────────
 
@@ -737,18 +696,28 @@ function CameraRig() {
       elapsed.current = st.playhead;
     }
 
-    let hit: ShotHit = null;
+    // 播放态：用转场窗口求「出镜 + 入镜」两个镜头槽；
+    // 编辑态（点选单个机位）：只看该机位，保持所见即所编辑，不做转场。
+    let frame: FrameState | null = null;
     if (st.playing) {
-      hit = shotAt(st.cameras, elapsed.current);
+      frame = frameAt(st.cameras, elapsed.current);
     } else {
       const cam = st.cameras.find((c) => c.id === st.activeCameraId) || null;
       if (cam) {
         const start = shotStartOf(st.cameras, cam.id);
-        hit = {
-          cam,
-          localT: Math.max(0, Math.min(durOf(cam), elapsed.current - start)),
-          start,
-          duration: durOf(cam),
+        const duration = durOf(cam);
+        const localT = Math.max(0, Math.min(duration, elapsed.current - start));
+        frame = {
+          slots: [{
+            index: st.cameras.indexOf(cam),
+            cam,
+            localT,
+            duration,
+            progress: duration > 0 ? Math.min(1, Math.max(0, localT / duration)) : 0,
+          }],
+          blend: 0,
+          transitioning: false,
+          boundary: -1,
         };
       }
     }
@@ -756,25 +725,58 @@ function CameraRig() {
     // 低频回写进度（~8fps）。若每帧 set，整块 1000 行面板会被拖垮。
     if (st.playing && Math.abs(elapsed.current - lastReport.current) > 0.12) {
       lastReport.current = elapsed.current;
-      st.reportProgress(elapsed.current, hit?.cam.id ?? null);
+      const last = frame ? frame.slots[frame.slots.length - 1] : undefined;
+      st.reportProgress(elapsed.current, last?.cam.id ?? null);
     }
 
-    // 把当前时间轴状态发布给白模动画（可变对象，不触发 React 重渲染 → 60fps 平滑）
+    // 发布给白模动画 / 转场遮挡（可变对象，不触发 React 重渲染 → 60fps 平滑）
     previewClock.t = elapsed.current;
     previewClock.playing = st.playing;
-    const h = hit;
-    if (h) {
-      previewClock.localT = h.localT;
-      previewClock.duration = h.duration;
-      previewClock.progress = h.duration > 0 ? Math.min(1, Math.max(0, h.localT / h.duration)) : 0;
-      previewClock.shotIndex = st.cameras.findIndex((c) => c.id === h.cam.id);
-      applyCamera(camera as THREE.PerspectiveCamera, h.cam, h.localT, h.duration);
+
+    if (frame && frame.slots.length) {
+      // cut 模式把连续 blend 量化成 0/1，退回硬切；dissolve / move 保留连续插值
+      const blend = effectiveBlend(frame.blend, st.transitionMode);
+      const dom = frame.slots[blend < 0.5 ? 0 : frame.slots.length - 1];
+      previewClock.localT = dom.localT;
+      previewClock.duration = dom.duration;
+      previewClock.progress = dom.progress;
+      previewClock.shotIndex = dom.index;
+
+      previewFrame.slots.length = 0;
+      for (const s of frame.slots) {
+        previewFrame.slots.push({
+          index: s.index,
+          localT: s.localT,
+          duration: s.duration,
+          progress: s.progress,
+        });
+      }
+      previewFrame.blend = blend;
+      previewFrame.transitioning = frame.transitioning;
+      previewFrame.fade = frame.transitioning && st.transitionMode === 'dissolve'
+        ? fadeOf(blend)
+        : 0;
+
+      // 相机：单镜直接落位；转场窗口内把出镜/入镜两个位姿插值，取代硬切
+      const poseA = cameraPose(frame.slots[0].cam, frame.slots[0].localT, frame.slots[0].duration);
+      const pose = frame.slots.length > 1
+        ? lerpPose(
+            poseA,
+            cameraPose(frame.slots[1].cam, frame.slots[1].localT, frame.slots[1].duration),
+            blend,
+          )
+        : poseA;
+      applyPose(camera as THREE.PerspectiveCamera, pose);
     } else {
       // 自由观察（未播放、未选机位）：动作时钟归零，白模回到静态站位
       previewClock.localT = 0;
       previewClock.duration = 0;
       previewClock.progress = 0;
       previewClock.shotIndex = -1;
+      previewFrame.slots.length = 0;
+      previewFrame.blend = 0;
+      previewFrame.transitioning = false;
+      previewFrame.fade = 0;
     }
   });
 
@@ -808,6 +810,7 @@ function SceneContent() {
   return (
     <>
       <GradientSky base={scene.background} />
+      <TransitionFade />
 
       {/* 三点布光：主光 + 冷色补光 + 暖色轮廓光。白模靠光影看体积，布光反而更重要 */}
       <ambientLight intensity={scene.ambientLightIntensity} />
